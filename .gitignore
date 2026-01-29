@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Data files
+data/
+*.csv
+*.parquet
+*.xlsx
+*.zip
+
+# Logs
+*.log
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Model checkpoints
+lightning_logs/
+checkpoints/
+*.ckpt
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
