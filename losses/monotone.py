@@ -48,7 +48,7 @@ class MonotonicityLoss(nn.Module):
 
         # Penalize negative differences (quantile crossings)
         violations = F.relu(-diffs + self.margin)
-
+        
         # Apply reduction
         if self.reduction == "mean":
             return violations.mean()
@@ -56,3 +56,41 @@ class MonotonicityLoss(nn.Module):
             return violations.sum()
         else:
             return violations
+
+
+from .pinball import PinballLoss
+
+
+class MQNLossWithMonotonicity(nn.Module):
+    """Combined MQN Loss + Monotonicity penalty for non-crossing quantiles."""
+    
+    def __init__(self, quantiles, monotone_weight: float = 0.1, monotone_margin: float = 0.01):
+        super().__init__()
+        self.mqn_loss = nn.ModuleDict()
+        for q in quantiles:
+            self.mqn_loss[str(q)] = PinballLoss(quantile=q, reduction="none")
+        self.monotonicity_loss = MonotonicityLoss(margin=monotone_margin, reduction="mean")
+        self.monotone_weight = monotone_weight
+        
+    def forward(self, predictions, targets, quantiles):
+        """
+        Args:
+            predictions: [B, H, Q]
+            targets: [B, H]
+            quantiles: [B, Q]
+        """
+        # Primary loss: MQN (pinball)
+        mqn = 0.0
+        Q = predictions.shape[-1]
+        for i, q in enumerate(quantiles[0].tolist()):
+            q_str = str(round(q, 4))
+            if q_str in self.mqn_loss:
+                mqn += self.mqn_loss[q_str](predictions[..., i], targets).mean()
+        mqn = mqn / Q
+        
+        # Secondary loss: Monotonicity penalty
+        mono = self.monotonicity_loss(predictions, quantiles)
+        
+        # Combined loss
+        total = mqn + self.monotone_weight * mono
+        return total

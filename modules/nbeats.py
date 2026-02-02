@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .noncrossing import NonCrossingQuantileHead, NonCrossingTriangularHead
 
 
 class QuantileConditionedBasisCoefficients(nn.Module):
@@ -335,3 +336,118 @@ class NBEATSAQQCBC(torch.nn.Module):
             backcast = backcast - b
 
         return output.transpose(-1, -2)
+
+
+class NBEATSNonCrossing(NBEATS):
+    """
+    NBEATS with Non-Crossing Quantiles via Cumulative Sum (Song et al. 2024).
+    
+    Key innovation: Uses NBEATSAQCAT-style processing but adds a final
+    non-crossing transformation via cumulative sum to guarantee monotonicity.
+    
+    Architecture:
+    - NBEATSAQCAT forward pass (proven to work well)
+    - Non-crossing head: sorts quantile indices, applies cumsum to enforce ordering
+    - This maintains NBEATSAQCAT's expressiveness while guaranteeing no crossings
+    """
+    
+    def __init__(
+        self, 
+        num_blocks: int, 
+        num_layers: int, 
+        layer_width: int, 
+        share: bool, 
+        size_in: int, 
+        size_out: int,
+        dropout: float = 0.0,
+        quantile_embed_dim: int = 64,
+        quantile_embed_num: int = 100,
+        quantile_head_type: str = 'cumsum',
+        quantile_head_hidden_dim: int = 256,
+        min_increment: float = 0.01,
+        num_quantiles: int = 9
+    ):
+        """Initialize exactly like NBEATSAQCAT (size_in+1 for quantile)."""
+        super().__init__(
+            num_blocks=num_blocks, 
+            num_layers=num_layers, 
+            layer_width=layer_width, 
+            share=share, 
+            size_in=size_in + 1,  # +1 for quantile concatenation like NBEATSAQCAT
+            size_out=size_out, 
+            block_class=NbeatsBlock
+        )
+        self.layer_width = layer_width
+        self.min_increment = min_increment
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract features (same as NBEATSAQCAT)."""
+        Q = 1
+        q_median = torch.ones(x.shape[0], Q).to(x) * 0.5
+        backcast = torch.cat([x.unsqueeze(1), q_median.unsqueeze(-1)], dim=-1)
+        
+        h = backcast.squeeze(1)
+        for layer in self.blocks[0].fc_layers:
+            h = torch.nn.functional.relu(layer(h))
+        
+        return h
+
+    def forward(self, x: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
+        """
+        Forward with non-crossing guarantee via differentiable cumsum transformation.
+        
+        Strategy: Run NBEATSAQCAT forward, then apply non-crossing transformation
+        that maintains differentiability while guaranteeing monotonicity.
+        
+        Args:
+            x: history [B, T]
+            q: quantile levels [B, Q]
+            
+        Returns:
+            quantiles: [B, H, Q] guaranteed monotonic
+        """
+        Q = q.shape[-1]
+        
+        # NBEATSAQCAT forward pass (proven architecture)
+        backcast = torch.cat([
+            torch.repeat_interleave(x[:, None], repeats=Q, dim=1, output_size=Q),
+            q[..., None]
+        ], dim=-1)  # [B, Q, T+1]
+
+        output = 0.0
+        for block in self.blocks:
+            f, b = block(backcast)
+            output = output + f
+            backcast = backcast - b
+
+        output = output.transpose(-1, -2)  # [B, H, Q]
+        
+        # Apply non-crossing transformation via differentiable cumsum
+        # Sort predictions by quantile level, then adjust spacing
+        q_sorted, sort_idx = q.sort(dim=-1)  # [B, Q]
+        
+        # Gather predictions in sorted quantile order
+        sort_idx_expanded = sort_idx.unsqueeze(1).expand(-1, output.shape[1], -1)  # [B, H, Q]
+        output_sorted = output.gather(-1, sort_idx_expanded)  # [B, H, Q]
+        
+        # Take first quantile as base, then compute increments
+        base = output_sorted[:, :, 0:1]  # [B, H, 1]
+        
+        if Q > 1:
+            # Compute raw increments from differences
+            raw_increments = output_sorted[:, :, 1:] - output_sorted[:, :, :-1]  # [B, H, Q-1]
+            
+            # Apply softplus to ensure positive (this is the key non-crossing enforcement)
+            positive_increments = torch.nn.functional.softplus(raw_increments, beta=1.0) + self.min_increment
+            
+            # Build monotonic predictions via cumsum
+            cumulative = torch.cumsum(positive_increments, dim=-1)  # [B, H, Q-1]
+            output_monotonic = torch.cat([base, base + cumulative], dim=-1)  # [B, H, Q]
+            
+            # Un-sort back to original quantile order
+            unsort_idx = sort_idx.argsort(dim=-1).unsqueeze(1).expand(-1, output.shape[1], -1)
+            output_final = output_monotonic.gather(-1, unsort_idx)
+        else:
+            output_final = base
+        
+        return output_final

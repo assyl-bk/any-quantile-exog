@@ -304,6 +304,88 @@ class AnyQuantileForecaster(MlpForecaster):
                  prog_bar=False, logger=True, batch_size=batch_size)
 
 
+class AnyQuantileForecasterWithMonotonicity(AnyQuantileForecaster):
+    """
+    AnyQuantileForecaster with monotonicity regularization.
+    
+    Adds a soft constraint to penalize quantile crossings during training,
+    encouraging the model to learn monotonic quantile predictions.
+    """
+    
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        
+        # Initialize monotonicity loss
+        self.monotone_weight = cfg.model.get('monotone_weight', 0.1)
+        self.monotone_margin = cfg.model.get('monotone_margin', 0.01)
+        self.monotonicity_loss = MonotonicityLoss(
+            margin=self.monotone_margin,
+            reduction='mean'
+        )
+    
+    def training_step(self, batch, batch_idx):
+        # Generate random quantiles
+        batch_size = batch['history'].shape[0]
+        if self.cfg.model.q_sampling == 'fixed_in_batch':
+            q = torch.rand(1)
+            batch['quantiles'] = (q * torch.ones(batch_size, 1)).to(batch['history'])
+        elif self.cfg.model.q_sampling == 'random_in_batch':
+            if self.cfg.model.q_distribution == 'uniform':
+                batch['quantiles'] = torch.rand(batch_size, 1).to(batch['history'])
+            elif self.cfg.model.q_distribution == 'beta':
+                batch['quantiles'] = torch.Tensor(np.random.beta(self.cfg.model.q_parameter, self.cfg.model.q_parameter, 
+                                                                 size=(batch_size, 1))).to(batch['history'])
+            else:
+                assert False, f"Option {self.cfg.model.q_distribution} is not implemented for model.q_distribution"
+        else:
+            assert False, f"Option {self.cfg.model.q_sampling} is not implemented for model.q_sampling"
+        
+        net_output = self.shared_forward(batch)
+        
+        y_hat = net_output['forecast'] # BxHxQ
+        quantiles = net_output['quantiles'][:,None] # Bx1xQ
+        center_idx = y_hat.shape[-1]
+        assert center_idx % 2 == 1, "Number of quantiles must be odd"
+        center_idx = center_idx // 2
+        
+        # Compute main loss
+        main_loss = self.loss(y_hat, batch['target'], q=quantiles) 
+        
+        # Compute monotonicity penalty
+        monotone_penalty = self.monotonicity_loss(y_hat, quantiles)
+        
+        # Combined loss
+        loss = main_loss + self.monotone_weight * monotone_penalty
+        
+        batch_size=batch['history'].shape[0]
+        self.log("train/loss", loss, on_step=True, on_epoch=True, 
+                 prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("train/main_loss", main_loss, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("train/monotone_penalty", monotone_penalty, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        
+        # Filter out NaN values before computing MSE/MAE
+        y_hat_point = y_hat[..., center_idx]
+        valid_mask = ~(torch.isnan(y_hat_point) | torch.isinf(y_hat_point) | 
+                       torch.isnan(batch['target']) | torch.isinf(batch['target']))
+        if valid_mask.any():
+            self.train_mse(y_hat_point[valid_mask], batch['target'][valid_mask])
+            self.train_mae(y_hat_point[valid_mask], batch['target'][valid_mask])
+        
+        self.log("train/mse", self.train_mse, on_step=False, on_epoch=True, 
+                 prog_bar=True, logger=True, batch_size=batch_size)
+        
+        self.log("train/mae", self.train_mae, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        
+        self.train_crps(y_hat, batch['target'], q=quantiles)
+        self.log("train/crps", self.train_crps, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        
+        return loss
+
+
 class AnyQuantileForecasterLog(AnyQuantileForecaster):
 
     def shared_forward(self, x):

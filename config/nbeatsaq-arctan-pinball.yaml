@@ -1,0 +1,88 @@
+random:
+  seed:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+
+logging:
+  path: ./lightning_logs/${dataset.name}
+  name: model=NBEATSAQ-ArctanPinball-s${model.loss.smoothness}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
+
+model:
+  _target_: model.AnyQuantileForecaster
+
+  # Standard model configuration
+  input_horizon_len: 168
+  max_norm: true
+
+  # ARCTAN PINBALL LOSS (smooth everywhere)
+  loss:
+    _target_: losses.ArctanPinballLoss
+    smoothness: 1.0 # s parameter (smaller = closer to standard pinball)
+    reduction: mean
+
+  # Quantile sampling
+  q_sampling: random_in_batch
+  q_distribution: beta
+  q_parameter: 0.3
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      dropout: 0.05
+      layer_width: 1024
+      num_layers: 4
+      num_blocks: 24
+      share: false
+      size_in: ${dataset.history_length}
+      size_out: ${dataset.horizon_length}
+      quantile_embed_dim: 128
+      quantile_embed_num: 100
+
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.001
+    weight_decay: 0.0001
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 1000
+    warmup_end_lr: ${model.optimizer.lr}
+
+dataset:
+  _target_: dataset.ElectricityUnivariateDataModule
+  name: MHLV
+  horizon_length: 48
+  history_length: 168
+  train_batch_size: 256
+  eval_batch_size: 512
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-01-01"
+    - "2018-01-01"
+    - "2019-01-01"
+  fillna: ffill
+  train_step: 12
+  eval_step: 24
+  num_workers: 8
+  persistent_workers: true
+
+trainer:
+  max_epochs: 15
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 50
+  devices: 1
+  accelerator: gpu
+  precision: 32
+  gradient_clip_val: 0.5
+
+checkpoint:
+  resume_ckpt: last
+  save_top_k: 5
+  monitor: val/crps
+  mode: min
+  ckpt_path: last

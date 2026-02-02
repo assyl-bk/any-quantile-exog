@@ -313,18 +313,32 @@ class ElectricityUnivariateDataModule(pl.LightningDataModule):
     
     @staticmethod
     def prepare_data():
-        logger.info("Downloading datasets")
         datasets_path = "data/electricity/datasets/"
         pathlib.Path(datasets_path).mkdir(parents=True, exist_ok=True)
-        proc = subprocess.run(["gsutil", "-m", "rsync", "gs://electricity-datasets", datasets_path],
-                              capture_output=True)
-        logger.info(proc.stderr.decode())
+        
+        # Check if data already exists
+        existing_data = glob(os.path.join(datasets_path, "mhlv", "M", "*.csv"))
+        if existing_data:
+            logger.info("Data already exists, skipping download")
+            return
+        
+        logger.info("Downloading datasets")
+        try:
+            proc = subprocess.run(["gsutil", "-m", "rsync", "gs://electricity-datasets", datasets_path],
+                                  capture_output=True, check=True)
+            logger.info(proc.stderr.decode())
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            logger.warning(f"Could not download datasets: {e}. Checking for local data...")
+            
         datasets = glob(os.path.join(datasets_path, "*.zip"))
 
         logger.info("Unzipping datasets")
         for d in datasets:
-            proc = subprocess.run(["unzip", "-u", d], capture_output=True)
-            logger.info(proc.stdout.decode())
+            try:
+                proc = subprocess.run(["unzip", "-u", d], capture_output=True)
+                logger.info(proc.stdout.decode())
+            except FileNotFoundError:
+                logger.warning("unzip command not found, skipping extraction")
 
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
