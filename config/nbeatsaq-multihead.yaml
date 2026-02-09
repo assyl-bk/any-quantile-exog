@@ -9,7 +9,7 @@ random:
 
 logging:
   path: ./lightning_logs/${dataset.name}
-  name: model=NBEATSAQ-ArctanPinballNorm-s${model.loss.smoothness}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
+  name: model=NBEATSAQ-MultiHead-blocks${model.nn.backbone.num_blocks}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
 
 model:
   _target_: model.AnyQuantileForecaster
@@ -18,29 +18,31 @@ model:
   input_horizon_len: 168
   max_norm: false
 
-  # ARCTAN PINBALL LOSS with normalization (smooth everywhere)
+  # MQNLoss - Proven to work (baseline CRPS=211)
   loss:
-    _target_: losses.ArctanPinballNormalizedLoss
-    smoothness: 0.3 # s parameter (smaller = closer to standard pinball, reduced for better calibration)
+    _target_: losses.MQNLoss
     reduction: mean
 
-  # Quantile sampling - FIXED: Use uniform instead of beta
+  # Quantile sampling for training
   q_sampling: random_in_batch
   q_distribution: uniform
   q_parameter: 0.3
 
   nn:
     backbone:
-      _target_: modules.NBEATSAQFILM
-      dropout: 0.0
-      layer_width: 1024
-      num_layers: 3
+      _target_: modules.MultiHeadNBEATSWrapper
+      # N-BEATS backbone configuration
       num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
       share: false
       size_in: ${dataset.history_length}
       size_out: ${dataset.horizon_length}
-      quantile_embed_dim: 64
-      quantile_embed_num: 100
+      # Multi-head specific configuration
+      quantile_levels: [0.025, 0.1, 0.25, 0.5, 0.75, 0.9, 0.975]  # Fixed quantile levels
+      head_hidden_dims: [256, 128]  # MLP head architecture
+      dropout: 0.1  # Dropout in heads
+      use_shared_first_layer: false  # true for efficiency, false for max flexibility
 
   optimizer:
     _target_: torch.optim.Adam
@@ -52,7 +54,7 @@ model:
     warmup_end_lr: ${model.optimizer.lr}
 
 dataset:
-  _target_: dataset.EMHIRESUnivariateDataModule
+  _target_: dataset.ElectricityUnivariateDataModule
   name: MHLV
   horizon_length: 48
   history_length: 168

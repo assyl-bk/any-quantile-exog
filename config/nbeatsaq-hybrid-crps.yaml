@@ -9,7 +9,7 @@ random:
 
 logging:
   path: ./lightning_logs/${dataset.name}
-  name: model=NBEATSAQ-ArctanPinballNorm-s${model.loss.smoothness}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
+  name: model=NBEATSAQ-HybridCRPS-a${model.loss.alpha}-b${model.loss.beta}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
 
 model:
   _target_: model.AnyQuantileForecaster
@@ -18,13 +18,17 @@ model:
   input_horizon_len: 168
   max_norm: false
 
-  # ARCTAN PINBALL LOSS with normalization (smooth everywhere)
+  # HYBRID CRPS-PINBALL LOSS
+  # Combines MQNLoss (proper quantiles) + CRPS sharpness penalty
+  # MQNLoss ensures coverage ≈ 0.95
+  # Sharpness penalty reduces CRPS below 211 baseline
   loss:
-    _target_: losses.ArctanPinballNormalizedLoss
-    smoothness: 0.3 # s parameter (smaller = closer to standard pinball, reduced for better calibration)
+    _target_: losses.HybridCRPSPinballLoss
+    alpha: 1.0   # Weight for MQNLoss (quantile calibration)
+    beta: 0.1    # Weight for sharpness penalty (tighter intervals)
     reduction: mean
 
-  # Quantile sampling - FIXED: Use uniform instead of beta
+  # Quantile sampling - uniform distribution
   q_sampling: random_in_batch
   q_distribution: uniform
   q_parameter: 0.3

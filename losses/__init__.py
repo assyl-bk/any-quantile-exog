@@ -13,5 +13,18 @@ __all__ = [
 from .smooth_pinball import (
     HuberPinballLoss,
     ArctanPinballLoss,
+    ArctanPinballNormalizedLoss,
     AdaptiveSmoothPinballLoss,
+    AdaptiveSmoothPinballNormalizedLoss,
+)
+
+from .crps import (
+    CRPSLoss,
+    WeightedCRPSLoss,
+    SmoothCRPSLoss,
+)
+
+from .hybrid_crps import (
+    HybridCRPSPinballLoss,
+    AdaptiveHybridCRPSLoss,
 )

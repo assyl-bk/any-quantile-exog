@@ -9,7 +9,7 @@ random:
 
 logging:
   path: ./lightning_logs/${dataset.name}
-  name: model=NBEATSAQ-ArctanPinballNorm-s${model.loss.smoothness}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
+  name: model=NBEATSAQ-CRPS-weighted-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
 
 model:
   _target_: model.AnyQuantileForecaster
@@ -18,13 +18,15 @@ model:
   input_horizon_len: 168
   max_norm: false
 
-  # ARCTAN PINBALL LOSS with normalization (smooth everywhere)
+  # WEIGHTED CRPS LOSS - Trapezoidal integration approximation
+  # More accurate integral approximation: CRPS = 2 * ∫ pinball dτ
   loss:
-    _target_: losses.ArctanPinballNormalizedLoss
-    smoothness: 0.3 # s parameter (smaller = closer to standard pinball, reduced for better calibration)
+    _target_: losses.WeightedCRPSLoss
     reduction: mean
+    # quantile_levels will use default 99 levels from 0.01 to 0.99
+    variant: weighted
 
-  # Quantile sampling - FIXED: Use uniform instead of beta
+  # Quantile sampling - uniform distribution
   q_sampling: random_in_batch
   q_distribution: uniform
   q_parameter: 0.3

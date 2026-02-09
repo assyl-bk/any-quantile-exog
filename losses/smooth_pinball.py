@@ -212,6 +212,85 @@ class ArctanPinballLoss(nn.Module):
         return numerator / denominator
 
 
+class ArctanPinballNormalizedLoss(nn.Module):
+    """
+    Arctan Pinball Loss with Target Normalization
+    
+    Like ArctanPinballLoss but with MQNLoss-style normalization by target values.
+    This makes the loss scale-invariant, which is critical for electricity data
+    where values can vary significantly across series.
+    
+    Mathematical Form:
+        ρ_τ^arctan-norm(u) = (τ - 1/2 + (1/π)arctan(u/s)) · u / max(|y|, 1)
+        
+    where:
+        - u = y - ŷ (error)
+        - y = target value
+        - s = smoothness parameter
+    
+    Args:
+        smoothness: Controls transition sharpness (default: 1.0)
+        reduction: 'mean' or 'sum' for loss aggregation
+    """
+    
+    def __init__(self, smoothness: float = 1.0, reduction: str = 'mean'):
+        super().__init__()
+        self.s = smoothness
+        self.reduction = reduction
+        
+    def forward(
+        self,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        tau: torch.Tensor = None,
+        q: torch.Tensor = None
+    ) -> torch.Tensor:
+        """
+        Forward pass with target normalization.
+        
+        Args:
+            preds: [B, H, Q] predicted quantiles
+            targets: [B, H] true values
+            tau: [Q] or [B, Q] quantile levels (alternative name)
+            q: [Q] or [B, Q] quantile levels
+            
+        Returns:
+            Scalar loss value
+        """
+        # Support both parameter names
+        quantiles = q if q is not None else tau
+        if quantiles is None:
+            raise ValueError("Either 'q' or 'tau' must be provided")
+        
+        # Reshape for broadcasting
+        targets = targets.unsqueeze(-1)  # [B, H, 1]
+        
+        if quantiles.dim() == 1:
+            tau = quantiles.view(1, 1, -1)  # [1, 1, Q]
+        else:
+            tau = quantiles.unsqueeze(1)  # [B, 1, Q]
+        
+        # Target normalization (like MQNLoss)
+        denominator = targets.clone()
+        denominator[denominator.abs() < 1] = 1
+        
+        # Compute errors: u = y - ŷ
+        errors = targets - preds  # [B, H, Q]
+        
+        # Smooth indicator function: τ - 1/2 + (1/π)arctan(u/s)
+        smooth_indicator = tau - 0.5 + (1.0 / math.pi) * torch.atan(errors / self.s)
+        
+        # Normalized smooth pinball loss
+        loss = smooth_indicator * errors / denominator
+        
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            return loss
+
+
 class AdaptiveSmoothPinballLoss(nn.Module):
     """
     Adaptive Smooth Pinball Loss
@@ -294,6 +373,98 @@ class AdaptiveSmoothPinballLoss(nn.Module):
         current_s = self.initial_s * (1 - progress) + self.final_s * progress
         
         # Update arctan loss smoothness
+        self.arctan_loss.s = current_s
+        
+        # Support both parameter names
+        quantiles = q if q is not None else tau
+        
+        # Compute loss
+        return self.arctan_loss(preds, targets, q=quantiles)
+    
+    def get_current_smoothness(self) -> float:
+        """Get current smoothness value."""
+        return self.arctan_loss.s
+
+
+class AdaptiveSmoothPinballNormalizedLoss(nn.Module):
+    """
+    Adaptive Smooth Pinball Loss with Target Normalization
+    
+    Combines adaptive smoothness annealing with MQNLoss-style normalization.
+    Best for electricity forecasting: smooth early training, sharp late training,
+    with scale-invariant loss throughout.
+    
+    Strategy:
+    - Early epochs: Smooth + normalized → Stable training
+    - Late epochs: Sharp + normalized → Accurate quantiles
+    
+    Args:
+        initial_smoothness: Starting smoothness (default: 1.0)
+        final_smoothness: Ending smoothness (default: 0.05)
+        reduction: 'mean' or 'sum'
+    """
+    
+    def __init__(
+        self,
+        initial_smoothness: float = 1.0,
+        final_smoothness: float = 0.05,
+        reduction: str = 'mean'
+    ):
+        super().__init__()
+        self.initial_s = initial_smoothness
+        self.final_s = final_smoothness
+        self.reduction = reduction
+        
+        # Internal normalized arctan loss
+        self.arctan_loss = ArctanPinballNormalizedLoss(
+            smoothness=initial_smoothness,
+            reduction=reduction
+        )
+        
+        # Track current epoch
+        self.current_epoch = 0
+        self.total_epochs = 1
+    
+    def set_epoch(self, epoch: int, total_epochs: int):
+        """Update current training progress."""
+        self.current_epoch = epoch
+        self.total_epochs = total_epochs
+    
+    def forward(
+        self,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        tau: torch.Tensor = None,
+        q: torch.Tensor = None,
+        epoch: Optional[int] = None,
+        total_epochs: Optional[int] = None
+    ) -> torch.Tensor:
+        """
+        Forward pass with adaptive smoothness and normalization.
+        
+        Args:
+            preds: [B, H, Q] predicted quantiles
+            targets: [B, H] true values
+            tau: [Q] or [B, Q] quantile levels
+            q: [Q] or [B, Q] quantile levels
+            epoch: Current epoch (optional)
+            total_epochs: Total epochs (optional)
+            
+        Returns:
+            Scalar loss value
+        """
+        # Update epoch if provided
+        if epoch is not None and total_epochs is not None:
+            self.current_epoch = epoch
+            self.total_epochs = total_epochs
+        
+        # Compute progress (0 to 1)
+        progress = self.current_epoch / max(self.total_epochs, 1)
+        
+        # Linear annealing from initial to final smoothness
+        current_s = self.initial_s * (1 - progress) + self.final_s * progress
+        
+        # Update loss smoothness
         self.arctan_loss.s = current_s
         
         # Support both parameter names

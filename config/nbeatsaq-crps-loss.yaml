@@ -9,7 +9,7 @@ random:
 
 logging:
   path: ./lightning_logs/${dataset.name}
-  name: model=NBEATSAQ-ArctanPinballNorm-s${model.loss.smoothness}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
+  name: model=NBEATSAQ-CRPS-${model.loss.variant}-history=${dataset.history_length}-lr=${model.optimizer.lr}-seed=${random.seed}
 
 model:
   _target_: model.AnyQuantileForecaster
@@ -18,13 +18,17 @@ model:
   input_horizon_len: 168
   max_norm: false
 
-  # ARCTAN PINBALL LOSS with normalization (smooth everywhere)
+  # CRPS LOSS - Direct optimization of evaluation metric
+  # Evidence: 24% improvement (Marchesoni-Acland et al., IEEE 2024)
+  # Three variants: energy (basic), weighted (integration), smooth (better gradients)
   loss:
-    _target_: losses.ArctanPinballNormalizedLoss
-    smoothness: 0.3 # s parameter (smaller = closer to standard pinball, reduced for better calibration)
+    _target_: losses.CRPSLoss  # Options: CRPSLoss, WeightedCRPSLoss, SmoothCRPSLoss
     reduction: mean
+    # For SmoothCRPSLoss only:
+    # beta: 0.1  # smoothing parameter
+    variant: energy  # For logging: 'energy', 'weighted', 'smooth'
 
-  # Quantile sampling - FIXED: Use uniform instead of beta
+  # Quantile sampling - uniform distribution
   q_sampling: random_in_batch
   q_distribution: uniform
   q_parameter: 0.3

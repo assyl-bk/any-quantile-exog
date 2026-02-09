@@ -304,6 +304,166 @@ class AnyQuantileForecaster(MlpForecaster):
                  prog_bar=False, logger=True, batch_size=batch_size)
 
 
+class AnyQuantileForecasterCQR(AnyQuantileForecaster):
+    """
+    Conformalized Quantile Regression (CQR) - Romano et al., NeurIPS 2019
+    
+    Post-processing for distribution-free coverage guarantees.
+    Guarantees: P(Y ∈ C(X)) ≥ 1-α
+    
+    Evidence: 31% shorter intervals than split conformal
+    """
+    
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        
+        from utils.cqr import ConformizedQuantileRegression
+        
+        self.cqr_alpha = getattr(cfg.model, 'cqr_alpha', 0.05)
+        self.cqr = ConformizedQuantileRegression(alpha=self.cqr_alpha)
+        self.cqr_calibrated = False
+        
+        # Fixed quantile levels for CQR [0.025, 0.1, 0.25, 0.5, 0.75, 0.9, 0.975]
+        self.cqr_quantile_levels = [0.025, 0.1, 0.25, 0.5, 0.75, 0.9, 0.975]
+        self.median_idx = 3  # Index of 0.5 quantile
+        
+        # Buffers for CQR calibration (only used on final validation epoch)
+        self.val_preds_for_cqr = []
+        self.val_targets_for_cqr = []
+        
+        print(f"\n{'='*60}")
+        print(f"[CQR] Conformalized Quantile Regression")
+        print(f"[CQR] Alpha: {self.cqr_alpha} → Target coverage: {1-self.cqr_alpha:.1%}")
+        print(f"[CQR] Quantiles: {self.cqr_quantile_levels}")
+        print(f"{'='*60}\n")
+    
+    def validation_step(self, batch, batch_idx):
+        """Validation with fixed quantiles for CQR."""
+        # Use fixed quantiles
+        fixed_quantiles = torch.tensor(self.cqr_quantile_levels, 
+                                      device=batch['history'].device, dtype=torch.float32)
+        batch['quantiles'] = fixed_quantiles.unsqueeze(0).expand(batch['history'].shape[0], -1)
+        
+        net_output = self.shared_forward(batch)
+        y_hat = net_output['forecast']  # BxHxQ
+        quantiles = net_output['quantiles'][:, None]  # Bx1xQ
+        
+        # Collect for CQR calibration (only on final epoch)
+        if self.trainer.current_epoch >= self.trainer.max_epochs - 1:
+            self.val_preds_for_cqr.append(y_hat.detach().cpu())
+            self.val_targets_for_cqr.append(batch['target'].detach().cpu())
+        
+        # Use median for point forecasts
+        y_hat_point = y_hat[..., self.median_idx].contiguous()
+        
+        # Compute metrics
+        valid_mask = ~(torch.isnan(y_hat_point) | torch.isinf(y_hat_point) | 
+                       torch.isnan(batch['target']) | torch.isinf(batch['target']))
+        if valid_mask.any():
+            self.val_mse(y_hat_point[valid_mask], batch['target'][valid_mask])
+            self.val_mae(y_hat_point[valid_mask], batch['target'][valid_mask])
+        
+        self.val_smape(y_hat_point, batch['target'])
+        self.val_mape(y_hat_point, batch['target'])
+        self.val_crps(y_hat, batch['target'], q=quantiles)
+        self.val_coverage(y_hat, batch['target'], q=quantiles)
+        
+        batch_size = batch['history'].shape[0]
+        self.log("val/mse", self.val_mse, on_step=False, on_epoch=True, 
+                 prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("val/mae", self.val_mae, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("val/smape", self.val_smape, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("val/mape", self.val_mape, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("val/crps", self.val_crps, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log(f"val/coverage-{self.val_coverage.level}", self.val_coverage, 
+                 on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
+    
+    def on_validation_epoch_end(self):
+        """Calibrate CQR after final validation epoch."""
+        is_final_epoch = self.trainer.current_epoch >= self.trainer.max_epochs - 1
+        
+        if is_final_epoch and not self.cqr_calibrated and len(self.val_preds_for_cqr) > 0:
+            import numpy as np
+            
+            # Concatenate all validation data
+            val_preds = torch.cat(self.val_preds_for_cqr, dim=0).numpy()  # [N, H, Q]
+            val_targets = torch.cat(self.val_targets_for_cqr, dim=0).numpy()  # [N, H]
+            quantiles = np.array(self.cqr_quantile_levels)
+            
+            print(f"\n{'='*60}")
+            print(f"[CQR] Calibrating after epoch {self.trainer.current_epoch}")
+            print(f"[CQR] Calibration data: {val_preds.shape[0]} samples")
+            print(f"[CQR] Quantiles: {quantiles}")
+            
+            # Calibrate CQR: compute adjustments for each quantile
+            adjustments = self.cqr.calibrate_all_quantiles(val_targets, val_preds, quantiles)
+            
+            print(f"[CQR] Adjustments: {adjustments}")
+            print(f"[CQR] Mean adjustment: {np.mean(np.abs(adjustments)):.2f}")
+            print(f"[CQR] Calibration complete!")
+            print(f"{'='*60}\n")
+            
+            self.cqr_calibrated = True
+            
+            # Clear buffers
+            self.val_preds_for_cqr = []
+            self.val_targets_for_cqr = []
+    
+    def test_step(self, batch, batch_idx):
+        """Test with CQR-adjusted predictions."""
+        # Use fixed quantiles
+        fixed_quantiles = torch.tensor(self.cqr_quantile_levels, 
+                                      device=batch['history'].device, dtype=torch.float32)
+        batch['quantiles'] = fixed_quantiles.unsqueeze(0).expand(batch['history'].shape[0], -1)
+        
+        net_output = self.shared_forward(batch)
+        y_hat = net_output['forecast']  # BxHxQ
+        quantiles = net_output['quantiles'][:, None]  # Bx1xQ
+        
+        # Apply CQR adjustments
+        if self.cqr_calibrated:
+            y_hat_np = y_hat.detach().cpu().numpy()
+            y_hat_adjusted = self.cqr.apply_adjustments(y_hat_np)
+            
+            # Convert back to tensor (keep NaN/Inf behavior)
+            y_hat = torch.from_numpy(y_hat_adjusted).to(y_hat.device).float()
+        else:
+            print("[CQR WARNING] CQR not calibrated!")
+        
+        # Use median for point forecasts
+        y_hat_point = y_hat[..., self.median_idx].contiguous()
+        
+        # Compute metrics
+        valid_mask = ~(torch.isnan(y_hat_point) | torch.isinf(y_hat_point) | 
+                       torch.isnan(batch['target']) | torch.isinf(batch['target']))
+        if valid_mask.any():
+            self.test_mse(y_hat_point[valid_mask], batch['target'][valid_mask])
+            self.test_mae(y_hat_point[valid_mask], batch['target'][valid_mask])
+        
+        self.test_smape(y_hat_point, batch['target'])
+        self.test_mape(y_hat_point, batch['target'])
+        self.test_crps(y_hat, batch['target'], q=quantiles)
+        self.test_coverage(y_hat, batch['target'], q=quantiles)
+        
+        batch_size = batch['history'].shape[0]
+        self.log("test/mse", self.test_mse, on_step=False, on_epoch=True, 
+                 prog_bar=True, logger=True, batch_size=batch_size)
+        self.log("test/mae", self.test_mae, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("test/smape", self.test_smape, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("test/mape", self.test_mape, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log("test/crps", self.test_crps, on_step=False, on_epoch=True, 
+                 prog_bar=False, logger=True, batch_size=batch_size)
+        self.log(f"test/coverage-{self.test_coverage.level}", self.test_coverage, 
+                 on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
+
+
 class AnyQuantileForecasterWithMonotonicity(AnyQuantileForecaster):
     """
     AnyQuantileForecaster with monotonicity regularization.
