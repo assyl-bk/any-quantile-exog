@@ -1,0 +1,37 @@
+================================================================================
+V2 SEQUENTIAL CURRICULUM — STAGE 3-V2 (EXOG+ADAPTIVE+SERIES) — PERFORMANCE SUMMARY
+================================================================================
+
+Generated : 2026-02-28 12:38:28
+Checkpoint: nbeatsaq-v2-stage3-seed0/model-epoch=03.ckpt
+Config    : config/stage3_v2.yaml (or stage2_v2.yaml fallback)
+
+Dataset   : 20 samples, 24h horizon
+Quantiles : [0.01 0.05 0.1  0.25 0.4  0.5  0.6  0.75 0.9  0.95 0.99]
+
+Point Metrics (Median forecast):
+  MAE  : 35.967 MW
+  RMSE : 63.762 MW
+  MAPE : 4.05%
+
+Quantile Coverage (target vs empirical):
+  Q0.01  empirical=0.104  error=+0.094
+  Q0.05  empirical=0.135  error=+0.085
+  Q0.10  empirical=0.206  error=+0.106
+  Q0.25  empirical=0.310  error=+0.060
+  Q0.40  empirical=0.415  error=+0.015
+  Q0.50  empirical=0.508  error=+0.008
+  Q0.60  empirical=0.581  error=-0.019
+  Q0.75  empirical=0.708  error=-0.042
+  Q0.90  empirical=0.831  error=-0.069
+  Q0.95  empirical=0.887  error=-0.062
+  Q0.99  empirical=0.948  error=-0.042
+
+  MACE : 0.0548
+
+Comparison vs paper baselines:
+  AQ-NBEATS (paper)  CRPS=211.22
+  AQ-ESRNN  (paper)  CRPS=195.94
+  V2 Stage3 (Exog+Adaptive+Series) ← this model
+
+================================================================================

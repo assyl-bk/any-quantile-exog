@@ -1,5 +1,5 @@
 model:
-  _target_: model.AnyQuantileWithSeriesEmbedding  # New class with series embeddings
+  _target_: model.AnyQuantileWithSeriesEmbedding # New class with series embeddings
   nn:
     backbone:
       _target_: modules.NBEATSAQCAT
@@ -12,24 +12,24 @@ model:
       dropout: 0.05
       quantile_embed_dim: 64
       quantile_embed_num: 100
-  
+
   input_horizon_len: 168
   loss:
     _target_: losses.MQNLoss
   q_sampling: random_in_batch
   q_distribution: uniform
   q_parameter: 0.5
-  max_norm: true  # Enable normalization to stabilize training
-  
+  max_norm: true # Enable normalization to stabilize training
+
   # NEW: Series embedding parameters
-  num_series: 35  # Number of European countries in EMHIRES dataset
-  series_embed_dim: 32  # Dimension of series embeddings
-  
+  num_series: 35 # Number of European countries in EMHIRES dataset
+  series_embed_dim: 32 # Dimension of series embeddings
+
   optimizer:
     _target_: torch.optim.Adam
     lr: 0.0001
     weight_decay: 0.00001
-  
+
   scheduler:
     _target_: schedulers.InverseSquareRoot
     warmup_updates: 400
@@ -42,10 +42,10 @@ dataset:
   eval_batch_size: 2048
   num_workers: 4
   persistent_workers: false
-  split_boundaries: ['2006-01-01', '2017-12-30', '2018-01-01', '2019-01-01']
+  split_boundaries: ["2006-01-01", "2017-12-30", "2018-01-01", "2019-01-01"]
   history_length: 168
   horizon_length: 24
-  fillna: 'ffill'
+  fillna: "ffill"
   train_step: 1
   eval_step: 24
 
@@ -67,6 +67,6 @@ checkpoint:
   ckpt_path: null
   resume_ckpt: null
 
-random.seed: !!python/tuple [0,1,2,3,4,5,6,7]
+random.seed: !!python/tuple [0, 1, 2, 3, 4, 5, 6, 7]
 
 # To run: python run.py --config=config/nbeatsaq-series-embed.yaml

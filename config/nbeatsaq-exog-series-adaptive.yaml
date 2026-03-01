@@ -1,0 +1,173 @@
+# nbeatsaq-exog-series-adaptive.yaml
+# ============================================================
+# Complete Model: Exog + Series + Adaptive Sampling
+# ============================================================
+#
+# Combines THREE improvements:
+#   1. Exogenous weather/calendar features (CRPS 168 - 20% improvement)
+#   2. Series embeddings for country-specific patterns
+#   3. Adaptive quantile sampling for better training
+#
+# Expected: Best of all worlds!
+# ============================================================
+
+model:
+  _target_: model.AnyQuantileForecasterExogSeriesAdaptive
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+
+      # Exogenous feature dimensions
+      num_continuous: 4 # weather: temp, humidity, pressure, wind
+      num_calendar: 4 # calendar: hour, dow, month, weekend
+
+  input_horizon_len: 168
+
+  loss:
+    _target_: losses.MQNLoss
+
+  # ── Quantile sampling (ADAPTIVE!) ─────────────────────────
+  q_sampling: adaptive # ← Key change from 'random_in_batch'
+  q_distribution: uniform
+  q_parameter: 0.3
+  max_norm: true
+
+  # ── Series embeddings ──────────────────────────────────────
+  num_series: 35 # European countries
+  series_embed_dim: 32 # embedding dimension
+  series_embed_scale: 0.08 # conservative scale
+
+  # ========================================
+  # ADAPTIVE SAMPLING (THE NEW ADDITION!)
+  # ========================================
+  adaptive_sampling:
+    num_adaptive_quantiles: 3 # Reduce from 5 to 3 (less overhead)
+    num_bins: 100 # Reduce from 200 (faster updates)
+    momentum: 0.98 # Increase from 0.95 (more stable)
+    temperature: 1.0 # Increase from 0.8 (more uniform)
+    min_prob: 0.001 # Increase from 0.0005 (prevent extremes)
+
+  # ── Optimizer ──────────────────────────────────────────────
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0005
+    weight_decay: 0.00005
+    betas:
+      - 0.9
+      - 0.999
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 400
+    warmup_end_lr: 0.0005
+
+# ── Dataset ────────────────────────────────────────────────────
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+
+  train_batch_size: 512
+  eval_batch_size: 512
+
+  num_workers: 4
+  persistent_workers: true
+
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+
+  # Exog features
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+# ── Trainer ────────────────────────────────────────────────────
+trainer:
+  max_epochs: 15
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.5
+
+# ── Logging ────────────────────────────────────────────────────
+logging:
+  path: lightning_logs
+  name: nbeatsaq-exog-series-adaptive
+
+# ── Checkpointing ──────────────────────────────────────────────
+checkpoint:
+  save_top_k: 2
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  resume_ckpt: null
+
+# ── Seeds ──────────────────────────────────────────────────────
+random.seed: [0, 1, 2, 3, 4, 5, 6, 7]
+
+# ============================================================
+# How Adaptive Sampling Works:
+# ============================================================
+#
+# 1. Initialize: All quantiles [0, 1] have equal probability
+#
+# 2. During training:
+#    - Sample 5 quantiles per batch based on current probabilities
+#    - Compute loss for each quantile
+#    - Update probabilities: higher loss → higher probability
+#    - Use momentum for stability
+#
+# 3. Effect:
+#    - Model focuses on "hard" quantiles (high error regions)
+#    - Reduces wasted computation on "easy" quantiles
+#    - Better overall CRPS (especially tails)
+#
+# 4. Hyperparameters explained:
+#    - num_adaptive_quantiles=5: Balance between coverage and speed
+#    - num_bins=200: Fine granularity for probability distribution
+#    - momentum=0.95: High stability (slowly adapts)
+#    - temperature=0.8: Moderately focused (not too extreme)
+#    - min_prob=0.0005: Prevents any quantile being completely ignored
+#
+# ============================================================
+# Expected Results:
+# ============================================================
+#
+# Without adaptive (Exog+Series):
+#   CRPS: 174.09 ± 1.0
+#   Coverage: 0.912
+#
+# With adaptive (Exog+Series+Adaptive):
+#   CRPS: 170-173 (expected 1-2% improvement)
+#   Coverage: 0.915-0.925 (better calibration)
+#   Training: Converges faster (5-10% fewer epochs needed)
+#
+# Why improvement is modest:
+#   - Exog features already provide dominant signal
+#   - Adaptive helps most with tail quantiles (0.01, 0.99)
+#   - Main benefit is training efficiency, not just accuracy
+#
+# ============================================================

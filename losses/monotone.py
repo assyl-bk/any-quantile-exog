@@ -35,6 +35,9 @@ class MonotonicityLoss(nn.Module):
         if quantiles.dim() == 2:
             quantiles = quantiles.unsqueeze(1)
 
+        # Handle invalid values in predictions
+        predictions = torch.nan_to_num(predictions, nan=0.0, posinf=1e6, neginf=-1e6)
+        
         # Sort quantiles and get sorting indices
         q_sorted, sort_idx = quantiles.sort(dim=-1)
 
@@ -47,15 +50,21 @@ class MonotonicityLoss(nn.Module):
         diffs = pred_sorted[..., 1:] - pred_sorted[..., :-1]  # [B, H, Q-1]
 
         # Penalize negative differences (quantile crossings)
+        # Clamp to prevent numerical instability
         violations = F.relu(-diffs + self.margin)
+        violations = torch.clamp(violations, max=1e6)  # Prevent explosion
         
         # Apply reduction
         if self.reduction == "mean":
-            return violations.mean()
+            result = violations.mean()
         elif self.reduction == "sum":
-            return violations.sum()
+            result = violations.sum()
         else:
-            return violations
+            result = violations
+        
+        # Final check for NaN/Inf
+        result = torch.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+        return result
 
 
 from .pinball import PinballLoss

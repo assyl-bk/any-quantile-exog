@@ -1,0 +1,132 @@
+# ============================================================
+# STAGE 2 v2: Exog + Adaptive Sampling  (Epochs 9–18)
+# ============================================================
+# Goal: Introduce adaptive sampling NOW while exog backbone is
+# already strong. Bin probability estimates will be meaningful
+# because the point forecasts are already good.
+#
+# Series embeddings remain at scale=0.0 — still inactive.
+# Adaptive gets a full 10 epochs to shape the loss landscape.
+#
+# Key settings vs original Stage 3:
+#   - num_adaptive_quantiles: 4  (was 2 — more tail resolution)
+#   - temperature: 1.2           (was 1.5 — sharper focus on hard quantiles)
+#   - min_prob: 0.002            (was 0.005 — allow stronger tail emphasis)
+#   - 10 epochs instead of 7    (adaptive gets proper training time)
+#   - LR: 0.0002                 (reduced for fine-tuning, but not too slow)
+# ============================================================
+
+model:
+  _target_: model.AnyQuantileForecasterExogSeriesAdaptive
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+      num_continuous: 4
+      num_calendar: 4
+
+  input_horizon_len: 168
+  loss:
+    _target_: losses.MQNLoss
+
+  # Adaptive sampling — enabled here for the first time
+  q_sampling: adaptive
+  q_distribution: beta # Keep Beta(0.3,0.3) for tail oversampling
+  q_parameter: 0.3
+  max_norm: true
+
+  # Series embeddings still zeroed out — not yet active
+  num_series: 35
+  series_embed_dim: 32
+  series_embed_scale: 0.0 # STILL ZERO — series introduced in Stage 3
+
+  # Improved adaptive settings for better coverage
+  adaptive_sampling:
+    num_adaptive_quantiles: 4 # was 2 — more tail resolution
+    num_bins: 30 # coarse enough to be stable
+    momentum: 0.99 # high stability
+    temperature: 1.35 # was 1.2 — halfway between 1.2 and 1.5
+    min_prob: 0.003 # was 0.002 — slightly higher floor for tails
+
+  # Reduced LR — fine-tuning on top of Stage 1 weights
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0002 # REDUCED from 0.0005
+    weight_decay: 0.00005
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 200 # shorter warmup
+    warmup_end_lr: 0.0002
+
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+  train_batch_size: 512
+  eval_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+trainer:
+  max_epochs: 18 # 10 more epochs on top of Stage 1's 8
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.4 # slightly tighter than Stage 1
+
+logging:
+  path: lightning_logs
+  name: nbeatsaq-v2-stage2-balanced
+
+checkpoint:
+  save_top_k: 1
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  # CRITICAL: load Stage 1 v2 weights
+  checkpoint:
+  resume_ckpt: "lightning_logs/nbeatsaq-sequential-stage1-seed0/checkpoints/model-epoch=7-v1.ckpt"
+
+random:
+  seed: 0
+
+# ============================================================
+# HOW TO RUN:
+#   python run-stage3.py --config config/stage2-v2.yaml
+#   (uses run-stage3.py because it does strict=False loading)
+#
+# Expected CRPS: ~168-172 (adaptive sampling should maintain or
+#                           improve on Stage 1 baseline)
+# Output checkpoint:
+#   lightning_logs/nbeatsaq-v2-stage2-seed0/checkpoints/model-epoch=17.ckpt
+#
+# Then run stage3-v2.yaml
+# ============================================================

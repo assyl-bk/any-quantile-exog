@@ -1,0 +1,119 @@
+# ============================================================
+# STAGE 3: Add Adaptive Sampling (Epochs 16-22)
+# ============================================================
+# Goal: Final refinement with minimal adaptive sampling
+# Start from Stage 2 checkpoint, enable adaptive very conservatively
+
+model:
+  _target_: model.AnyQuantileForecasterExogSeriesAdaptive
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+      num_continuous: 4
+      num_calendar: 4
+
+  input_horizon_len: 168
+  loss:
+    _target_: losses.MQNLoss
+
+  # NOW enable adaptive (VERY conservative)
+  q_sampling: adaptive # SWITCH from random_in_batch
+  q_distribution: uniform
+  q_parameter: 0.3
+  max_norm: true
+
+  # Keep series embeddings from Stage 2
+  num_series: 35
+  series_embed_dim: 32
+  series_embed_scale: 0.08
+
+  # ULTRA-MINIMAL adaptive settings
+  adaptive_sampling:
+    num_adaptive_quantiles: 4 # Absolute minimum
+    num_bins: 30 # Very coarse (was 100)
+    momentum: 0.99 # Maximum stability (was 0.98)
+    temperature: 1.2 # Almost uniform (was 1.2)
+    min_prob: 0.002 # High floor (was 0.001)
+
+  # VERY LOW learning rate for final fine-tuning
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0001 # VERY SLOW (was 0.0002)
+    weight_decay: 0.00001
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 100 # Very short warmup
+    warmup_end_lr: 0.0001
+
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+  train_batch_size: 512
+  eval_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+trainer:
+  max_epochs: 22 # Stage 3: 7 more epochs (total 22)
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.3 # Very tight (was 0.4)
+
+logging:
+  path: lightning_logs
+  name: nbeatsaq-sequential-stage3
+
+checkpoint:
+  save_top_k: 1
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  # CRITICAL: Resume from Stage 2
+  resume_ckpt: lightning_logs/nbeatsaq-sequential-stage2-seed0/checkpoints/model-epoch=14.ckpt
+
+random:
+  seed: 0
+
+# ============================================================
+# Instructions for Stage 3:
+# ============================================================
+#
+# 1. Make sure Stage 2 checkpoint exists
+# 2. This will load Stage 2 weights (Exog+Series)
+# 3. Adaptive sampling is MINIMAL (2q, temp=1.5, very stable)
+# 4. VERY LOW LR (0.0001) = just a light polish
+# 5. Expected result: CRPS ~172-174 (hopefully better than Stage 2)
+# 6. If worse, Stage 2 is your best model
+#
+# ============================================================
