@@ -1,0 +1,121 @@
+# Sequential Training Strategy: Exog + Series + Adaptive
+# ========================================================
+#
+# IDEA: Train components one at a time, not all together
+#
+# Stage 1: Train with Exog only (stabilize baseline)
+# Stage 2: Add Series embeddings (fine-tune on top)
+# Stage 3: Add Adaptive sampling (final refinement)
+#
+# This prevents components from interfering during initial training
+# ========================================================
+
+# ============================================================
+# STAGE 1: Exog-Only Foundation (Epochs 0-8)
+# ============================================================
+# Goal: Establish strong baseline with weather/calendar features
+
+model:
+  _target_: model.AnyQuantileForecasterExogWithSeries
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+      num_continuous: 4
+      num_calendar: 4
+
+  input_horizon_len: 168
+  loss:
+    _target_: losses.MQNLoss
+
+  # Stage 1: NO series embeddings yet (freeze them)
+  q_sampling: random_in_batch
+  q_distribution: beta
+  q_parameter: 0.3
+  max_norm: true
+
+  # Series embeddings present but FROZEN/MINIMAL
+  num_series: 35
+  series_embed_dim: 32
+  series_embed_scale: 0.0 # START AT ZERO!
+
+  # Standard optimizer for Stage 1
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0005 # Normal LR
+    weight_decay: 0.00005
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 400
+    warmup_end_lr: 0.0005
+
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+  train_batch_size: 512
+  eval_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+trainer:
+  max_epochs: 8 # Stage 1: 8 epochs
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.5
+
+logging:
+  path: lightning_logs
+  name: nbeatsaq-sequential-stage1
+
+checkpoint:
+  save_top_k: 1
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  resume_ckpt: null
+
+random:
+  seed: [0] # Start with one seed to test
+
+
+# ============================================================
+# Instructions for Stage 1:
+# ============================================================
+#
+# 1. Train this config first
+# 2. Expected result: CRPS ~168-170 (like Exog-only)
+# 3. Save checkpoint: lightning_logs/nbeatsaq-sequential-stage1/checkpoints/model-epoch=07.ckpt
+# 4. This checkpoint has learned exog patterns strongly
+# 5. Move to Stage 2 config to add series embeddings
+#
+# ============================================================

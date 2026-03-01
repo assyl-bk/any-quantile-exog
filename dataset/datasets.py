@@ -169,6 +169,144 @@ class ElectricityUnivariateDataset(Dataset):
     def setup(self, stage=None):
         """PyTorch Lightning setup method"""
         pass
+
+
+class ElectricityWithExogDataset(ElectricityUnivariateDataset):
+    """Extended dataset with exogenous features support"""
+    def __init__(self,
+                 name: str,
+                 split: str,
+                 exog_features: List[str] = None,
+                 calendar_features: bool = True,
+                 **kwargs):
+        super().__init__(name, split, **kwargs)
+        self.exog_features = exog_features if exog_features is not None else ['temperature', 'humidity']
+        self.calendar_features = calendar_features
+        
+        # Load exogenous data (aligned with time series)
+        if self.exog_features:
+            # Use repo-root absolute path so docker / different CWDs still work
+            base_dir = pathlib.Path(__file__).resolve().parent.parent
+            exog_path = base_dir / 'data' / 'exogenous' / f'{name.lower()}_weather.csv'
+            if exog_path.exists():
+                try:
+                    # First attempt: let pandas auto-detect delimiter
+                    with open(str(exog_path), 'r', encoding='utf-8') as f:
+                        # Read first line to check structure
+                        first_line = f.readline()
+                        logger.info(f"First line of CSV: {first_line[:100]}")
+                    
+                    # Try reading without explicit delimiter parameter (auto-detect)
+                    self.exog_df = pd.read_csv(str(exog_path), encoding='utf-8', parse_dates=['ds'])
+                    self.exog_df = self.exog_df.set_index('ds')
+                    logger.info(f"Loaded exogenous data from {exog_path}: shape={self.exog_df.shape}, features={list(self.exog_df.columns)}")
+                except (ValueError, KeyError, pd.errors.ParserError) as e:
+                    # Fallback: read without date parsing, manually check and split if needed
+                    logger.warning(f"Error parsing exogenous data: {e}. Attempting manual parsing...")
+                    try:
+                        # Read raw to inspect
+                        with open(str(exog_path), 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                        
+                        # Check if header is a single comma-separated line that needs splitting
+                        header_line = lines[0].strip()
+                        logger.info(f"Header: {header_line}")
+                        
+                        # Handle quoted headers
+                        if header_line.startswith('"') and header_line.endswith('"'):
+                            header_line = header_line[1:-1]
+                            logger.info(f"Unquoted header: {header_line}")
+                        
+                        if ',' in header_line:
+                            # Manually parse the CSV with comma separation
+                            import csv
+                            from io import StringIO
+                            
+                            # Read all lines and reconstruct CSV content
+                            csv_content = ''.join(lines)
+                            
+                            # Remove surrounding quotes if present in entire content
+                            if csv_content.startswith('"') and csv_content[1] == 'd' and csv_content[2] == 's':
+                                # Remove quotes from each line if they exist
+                                lines_clean = []
+                                for line in lines:
+                                    line_clean = line.strip()
+                                    if line_clean.startswith('"') and line_clean.endswith('"'):
+                                        line_clean = line_clean[1:-1]
+                                    lines_clean.append(line_clean)
+                                csv_content = '\n'.join(lines_clean)
+                            
+                            # Parse with StringIO
+                            reader = csv.DictReader(StringIO(csv_content))
+                            data = list(reader)
+                            
+                            self.exog_df = pd.DataFrame(data)
+                            logger.info(f"[Manual Parse] Columns: {list(self.exog_df.columns)}")
+                            
+                            if 'ds' in self.exog_df.columns:
+                                self.exog_df['ds'] = pd.to_datetime(self.exog_df['ds'])
+                                self.exog_df = self.exog_df.set_index('ds')
+                                logger.info(f"[Manual Parse] Successfully loaded: shape={self.exog_df.shape}")
+                            else:
+                                logger.warning(f"'ds' not in columns {list(self.exog_df.columns)}. Disabling exogenous features.")
+                                self.exog_features = None
+                                self.exog_df = None
+                        else:
+                            logger.warning(f"Could not determine CSV format. Disabling exogenous features.")
+                            self.exog_features = None
+                            self.exog_df = None
+                    except Exception as e2:
+                        logger.warning(f"Manual parsing failed: {e2}. Disabling exogenous features.")
+                        self.exog_features = None
+                        self.exog_df = None
+                except Exception as e:
+                    logger.warning(f"Unexpected error loading exogenous data: {e}. Disabling exogenous features.")
+                    self.exog_features = None
+                    self.exog_df = None
+            else:
+                logger.warning(f"Exogenous data not found at {exog_path}. Disabling exogenous features.")
+                self.exog_features = None
+                self.exog_df = None
+    
+    def _get_calendar_features(self, timestamps):
+        hour = timestamps.dt.hour.values / 23.0  # Normalize to [0, 1] properly
+        dow = timestamps.dt.dayofweek.values / 6.0  # 0-6 days, normalize to [0, 1]
+        month = (timestamps.dt.month.values - 1) / 11.0  # 1-12 -> 0-11, normalize to [0, 1]
+        is_weekend = (timestamps.dt.dayofweek.values >= 5).astype(float)  # Already 0 or 1
+        return np.stack([hour, dow, month, is_weekend], axis=-1)
+        
+    def __getitem__(self, index):
+        # Get base item from parent class
+        item = super().__getitem__(index)
+        
+        # Calculate window position (same logic as parent class)
+        column_idx = bisect.bisect_right(self.cum_num_windows, index)
+        window_idx = self.num_nulls[column_idx] + self.step * index - (
+            self.step * self.cum_num_windows[column_idx-1] if column_idx > 0 else 0
+        )
+        
+        # Get timestamps for this window
+        window_times = self.series_timestamps.iloc[window_idx:window_idx + self.tot_window_len]
+        
+        # Add exogenous features
+        if self.exog_features and self.exog_df is not None:
+            try:
+                exog = self.exog_df.loc[window_times.values][self.exog_features].values
+                item['exog_history'] = exog[:self.history_length][None].astype(np.float32)
+                item['exog_future'] = exog[self.history_length:][None].astype(np.float32)
+            except KeyError:
+                logger.warning(f"Missing exogenous data for timestamps in window {index}")
+                # Provide zero-filled arrays as fallback
+                item['exog_history'] = np.zeros((1, self.history_length, len(self.exog_features)), dtype=np.float32)
+                item['exog_future'] = np.zeros((1, self.horizon_length, len(self.exog_features)), dtype=np.float32)
+        
+        if self.calendar_features:
+            calendar = self._get_calendar_features(window_times)
+            item['calendar_history'] = calendar[:self.history_length][None].astype(np.float32)
+            item['calendar_future'] = calendar[self.history_length:][None].astype(np.float32)
+        
+        return item
+
     
 class ElectricityWithExogDataModule(pl.LightningDataModule):
     def __init__(self, 
@@ -199,6 +337,35 @@ class ElectricityWithExogDataModule(pl.LightningDataModule):
         self.calendar_features = calendar_features
         self.split_boundaries = split_boundaries
         self.fillna = fillna
+    
+    @staticmethod
+    def prepare_data():
+        datasets_path = "data/electricity/datasets/"
+        pathlib.Path(datasets_path).mkdir(parents=True, exist_ok=True)
+        
+        # Check if data already exists
+        existing_data = glob(os.path.join(datasets_path, "mhlv", "M", "*.csv"))
+        if existing_data:
+            logger.info("Data already exists, skipping download")
+            return
+        
+        logger.info("Downloading datasets")
+        try:
+            proc = subprocess.run(["gsutil", "-m", "rsync", "gs://electricity-datasets", datasets_path],
+                                  capture_output=True, check=True)
+            logger.info(proc.stderr.decode())
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            logger.warning(f"Could not download datasets: {e}. Checking for local data...")
+            
+        datasets = glob(os.path.join(datasets_path, "*.zip"))
+
+        logger.info("Unzipping datasets")
+        for d in datasets:
+            try:
+                proc = subprocess.run(["unzip", "-u", d], capture_output=True)
+                logger.info(proc.stdout.decode())
+            except FileNotFoundError:
+                logger.warning("unzip command not found, skipping extraction")
     
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders

@@ -43,12 +43,16 @@ class MQNLoss(_Loss):
         if target.dim() != input.dim():
             target = target[..., None]
 
-        denominator = target.clone()
-        denominator[denominator < 1] = 1
+        # Improved numerical stability
+        denominator = torch.abs(target).clone()
+        denominator = torch.clamp(denominator, min=1.0)  # Clamp to minimum 1.0
             
         pinball = torch.where(target >= input, 
                               q*(target - input) / denominator, 
                               (1-q)*(input-target) / denominator)
+        
+        # Handle NaN/Inf values
+        pinball = torch.nan_to_num(pinball, nan=0.0, posinf=1e3, neginf=-1e3)
         
         return torch.mean(pinball)
 

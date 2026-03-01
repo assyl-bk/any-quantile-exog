@@ -1,0 +1,136 @@
+# nbeatsaq-exog-series.yaml
+# ============================================================
+# Smart Combination: Exog + Series Embedding (NO Monotonicity)
+# ============================================================
+#
+# Combines TWO proven improvements:
+#   1. Exogenous weather/calendar  (proven: CRPS 168 - 20% improvement)
+#   2. Series embeddings            (proven: CRPS ~206)
+#
+# Expected: CRPS ~160-165 (additive benefits without conflicts)
+# Training time: ~14 hours/seed on RTX 3050 with fp16
+#
+# WHY NO MONOTONICITY:
+#   - Ultimate model (all 3) got CRPS 239 (worse than baseline!)
+#   - Monotonicity conflicts with the other components
+#   - Exog+Series should work well together without interference
+# ============================================================
+
+model:
+  _target_: model.AnyQuantileForecasterCombined
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+
+      # Exogenous feature dimensions
+      num_continuous: 4 # weather: temp, humidity, pressure, wind
+      num_calendar: 4 # calendar: hour, dow, month, weekend
+
+  input_horizon_len: 168
+
+  loss:
+    _target_: losses.MQNLoss
+
+  # ── Quantile sampling (standard baseline) ─────────────────
+  q_sampling: random_in_batch
+  q_distribution: uniform
+  q_parameter: 0.3
+  max_norm: true
+
+  # ── Series embeddings (conservative scale) ────────────────
+  num_series: 35 # European countries
+  series_embed_dim: 32 # embedding dimension
+  series_embed_scale: 0.08 # conservative (was 0.1, reduced slightly)
+
+  # ── Optimizer ──────────────────────────────────────────────
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0005 # proven good learning rate from exog-only
+    weight_decay: 0.00005
+    betas:
+      - 0.9
+      - 0.999
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 400
+    warmup_end_lr: 0.0005
+
+# ── Dataset: Need EMHIRES with exog support ───────────────────
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule # Has series_id
+  name: MHLV
+
+  train_batch_size: 512
+  eval_batch_size: 512
+
+  num_workers: 4
+  persistent_workers: true
+
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+
+  # Exog features (if dataset supports them)
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+# ── Trainer ────────────────────────────────────────────────────
+trainer:
+  max_epochs: 15
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16 # critical for speed
+  gradient_clip_val: 0.5
+
+# ── Logging ────────────────────────────────────────────────────
+logging:
+  path: lightning_logs
+  name: nbeatsaq-exog-series
+
+# ── Checkpointing ──────────────────────────────────────────────
+checkpoint:
+  save_top_k: 2
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  resume_ckpt: null
+
+# ── Seeds ──────────────────────────────────────────────────────
+random.seed: !!python/tuple [0, 1, 2, 3, 4, 5, 6, 7]
+
+# ============================================================
+# Expected Results (Conservative Estimate):
+#
+#   Baseline (paper):      CRPS 211.22
+#   Exog alone:            CRPS 168.46 (-20.2%)
+#   + Series (marginal):   CRPS ~162   (-2-3% additional)
+#   ─────────────────────────────────────────────
+#   Exog + Series:         CRPS 160-165 (-22-24% total)
+#
+# This should be BETTER than exog-only without the problems
+# that monotonicity caused in the ultimate model!
+# ============================================================

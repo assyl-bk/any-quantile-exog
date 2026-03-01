@@ -1,4 +1,5 @@
 from .models import (
+    AnyQuantileForecasterExogWithSeries,
     MlpForecaster, 
     AnyQuantileForecaster,
     AnyQuantileForecasterCQR,  # CQR post-processing
@@ -11,14 +12,13 @@ from .models import (
     AnyQuantileForecasterWithHierarchicalMonotonicity,  # Combined approach
     AnyQuantileForecasterWithTCR,  # TCR contribution
     AnyQuantileForecasterWithDBE,  # DBE contribution
-    AnyQuantileForecasterQCNBEATS  # QC-NBEATS: Combined QCBC+TCR+DBE
-)
-
-# Import the exogenous version separately
-try:
-    from .models_exog import AnyQuantileForecasterExog
-except ImportError:
-    pass
+    AnyQuantileForecasterQCNBEATS,  # QC-NBEATS: Combined QCBC+TCR+DBE
+    AnyQuantileForecasterExog,  # Exogenous features support
+    AnyQuantileWithSeriesEmbedding,
+    AnyQuantileForecasterCombined,    
+    AnyQuantileForecasterExogWithSeries,
+    AnyQuantileForecasterExogSeriesAdaptive
+    )
 
 __all__ = [
     'MlpForecaster',
@@ -27,9 +27,16 @@ __all__ = [
     'AnyQuantileForecasterWithMonotonicity',
     'AnyQuantileForecasterLog',
     'GeneralAnyQuantileForecaster',
-    'AnyQuantileForecasterExog',
     'AnyQuantileForecasterResidualHierarchical',
     'AnyQuantileForecasterLightweightHierarchical',
     'AnyQuantileForecasterWithTCR',
     'AnyQuantileForecasterWithDBE',
+    'AnyQuantileForecasterHierarchical',
+    'AnyQuantileForecasterWithHierarchicalMonotonicity',
+    'AnyQuantileForecasterQCNBEATS',
+    'AnyQuantileForecasterExog',
+    'AnyQuantileWithSeriesEmbedding',
+    'AnyQuantileForecasterExogWithSeries',
+    'AnyQuantileForecasterExogSeriesAdaptive',
+    'AnyQuantileForecasterCombined'
 ]

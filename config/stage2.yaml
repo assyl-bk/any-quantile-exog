@@ -1,0 +1,111 @@
+# ============================================================
+# STAGE 2: Add Series Embeddings (Epochs 9-15)
+# ============================================================
+# Goal: Fine-tune by gradually enabling series embeddings
+# Start from Stage 1 checkpoint, slowly introduce series bias
+
+model:
+  _target_: model.AnyQuantileForecasterExogWithSeries
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+      num_continuous: 4
+      num_calendar: 4
+
+  input_horizon_len: 168
+  loss:
+    _target_: losses.MQNLoss
+
+  # Still standard sampling
+  q_sampling: random_in_batch
+  q_distribution: beta
+  q_parameter: 0.3
+  max_norm: true
+
+  # NOW enable series embeddings gradually
+  num_series: 35
+  series_embed_dim: 32
+  series_embed_scale: 0.08 # ENABLE (was 0.0)
+
+  # LOWER learning rate for fine-tuning
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0002 # REDUCED (was 0.0005)
+    weight_decay: 0.00005
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 200 # Shorter warmup
+    warmup_end_lr: 0.0002
+
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+  train_batch_size: 512
+  eval_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+trainer:
+  max_epochs: 15 # Stage 2: 7 more epochs (total 15)
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.4 # Tighter (was 0.5)
+
+logging:
+  path: lightning_logs
+  name: nbeatsaq-sequential-stage2
+
+checkpoint:
+  save_top_k: 1
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  # CRITICAL: Resume from Stage 1
+  resume_ckpt: lightning_logs/nbeatsaq-sequential-stage1-seed0/checkpoints/model-epoch=7.ckpt
+
+random:
+  seed: 0
+
+# ============================================================
+# Instructions for Stage 2:
+# ============================================================
+#
+# 1. Make sure Stage 1 checkpoint exists
+# 2. This will load Stage 1 weights and fine-tune
+# 3. Lower LR (0.0002) prevents destroying learned patterns
+# 4. Series embeddings add subtle country-specific adjustments
+# 5. Expected result: CRPS ~172-174
+# 6. Save checkpoint for Stage 3
+#
+# ============================================================
