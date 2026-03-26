@@ -1,0 +1,195 @@
+\begin{center}
+   \chapter{Hyperparameter Tables and Supplementary Details}
+\end{center}
+\label{annex:hyperparams}
+
+\noindent
+This annex provides complete hyperparameter tables for all baseline
+and enhanced model configurations, as well as supplementary technical
+details on the experimental setup.
+
+\section*{A.1 AQ-NBEATS Baseline Hyperparameters}
+
+\begin{table}[H]
+\centering
+\caption{AQ-NBEATS-CAT baseline hyperparameter settings.}
+\label{tab:aqnbeats_hparams}
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Epochs              & 15 \\
+Loss function       & Normalised MQN (Eq.~\ref{eq:mqn}) \\
+Input normalisation & None \\
+Hidden width ($d_h$)& 1024 \\
+Residual blocks ($R$) & 30 \\
+Layers per block ($L$) & 3 \\
+Weight sharing      & False \\
+Lookback window ($W$, hours) & 168 \\
+Forecast horizon ($H$, hours) & 48 \\
+Batch size          & 1024 \\
+Optimiser           & AdamW \\
+Peak learning rate  & 0.0005 \\
+LR schedule         & Inverse square-root, 400-batch warm-up \\
+Quantile sampling   & Uniform $U(0,1)$ \\
+Dropout             & 0 \\
+Total parameters    & 74.1M \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{A.2 Exogenous Feature Model Hyperparameters}
+
+\begin{table}[H]
+\centering
+\caption{Additional hyperparameters for exogenous-augmented experiments.}
+\label{tab:exog_hparams}
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Continuous weather features & Temperature, Humidity, Pressure, Wind speed (4 features) \\
+Calendar embedding dimensions & Hour: 4, Day-of-week: 4, Month: 4, Weekend: 2 \\
+Weather MLP hidden dim & 64 \\
+Weather MLP output dim & 168 (projected to lookback window size) \\
+Feature scaling (continuous) & Standard scaling on training split \\
+Calendar features & Learnable embedding tables (random normal init.) \\
+Batch size (exog runs) & 512 (memory constraint on RTX 3070 fp16) \\
+Peak learning rate (exog) & 0.0001 (reduced for stability) \\
+Mixed precision (dev) & fp16 (RTX 3070); fp32 (A40 production) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{A.3 Series Embedding Hyperparameters}
+
+\begin{table}[H]
+\centering
+\caption{Series embedding module settings.}
+\label{tab:embed_hparams}
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Number of countries     & 35 \\
+Embedding dimension ($d_e$) & 32 \\
+Projection to input space & Linear layer, std 0.01 initialisation \\
+Additive scale ($\alpha$) & 0.1 (baseline), 0.08 (combined with exog) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{A.4 CQR Calibration Settings}
+
+\begin{table}[H]
+\centering
+\caption{CQR calibration settings.}
+\label{tab:cqr_hparams}
+\begin{tabular}{ll}
+\toprule
+\textbf{Setting} & \textbf{Value} \\
+\midrule
+Base model         & Stage 3-v2 (Exog + Adaptive + Series) \\
+Calibration split  & 2018-01-01 to 2018-06-30 \\
+Test split         & 2018-07-01 to 2018-12-31 \\
+Target coverage ($1-\alpha$) & 0.95 \\
+Non-conformity score & CQR asymmetric (Eq.~\ref{eq:cqr_score}) \\
+Conformity score quantile level & $(1-\alpha)(1 + 1/N_{\text{cal}})$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{A.5 Published Baseline Model Hyperparameters}
+
+For completeness, we reproduce the hyperparameter settings of all
+baseline models from Smyl et al.~\cite{smyl2025anyquantile}.
+
+\begin{table}[H]
+\centering
+\caption{GluonTS neural baseline hyperparameters (from~\protect\cite{smyl2025anyquantile}).}
+\label{tab:gluonts_hparams}
+\begin{tabular}{llc}
+\toprule
+\textbf{Model} & \textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+All neural & Epochs & 100 \\
+           & Batch size & 32 \\
+           & Optimiser & Adam \\
+           & Learning rate & 0.001 \\
+           & Dropout & 0.1 \\
+\midrule
+MLP        & Hidden size & {[40, 40]} \\
+           & Activation & ReLU \\
+\midrule
+DeepAR     & Cell type & LSTM \\
+           & Hidden size & 40 \\
+           & Layers & 2 \\
+           & Scaling & True \\
+\midrule
+Transformer & Model dim & 32 \\
+           & FF dim scale & 4 \\
+           & Attention heads & 8 \\
+\midrule
+WaveNet    & Residual channels & 24 \\
+           & Skip channels & 32 \\
+           & Stacks & 1 \\
+           & Epochs & 200 \\
+           & Learning rate & 0.01 \\
+\midrule
+TFT        & Hidden size & 32 \\
+           & Variable selection & True \\
+           & Attention heads & 4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{center}
+   \chapter{Complete Experiment Log}
+\end{center}
+\label{annex:explog}
+
+\noindent
+Table~\ref{tab:full_exp_log} provides the complete experiment log
+across all 23 configurations evaluated in this study. Experiments
+are ordered by category and then by CRPS.
+
+\begin{table}[H]
+\centering
+\caption{Complete experiment log. CRPS reported as mean$\pm$std where
+multi-seed; single-seed values marked with $^*$.}
+\label{tab:full_exp_log}
+\begin{tabular}{clllcc}
+\toprule
+\textbf{Exp} & \textbf{Category} & \textbf{Configuration} &
+\textbf{Seeds} & \textbf{CRPS} & \textbf{Cov-0.95} \\
+\midrule
+Paper  & Baseline & AQ-NBEATS (published)     & 8   & 211.22           & --- \\
+Exp 3  & Baseline & Baseline reproduced        & 7   & 190.78$\pm$1.42  & 0.942 \\
+\midrule
+Exp 19 & Augment  & Series embed only          & 7   & 206.51$\pm$0.88  & 0.936 \\
+Exp 20 & Augment  & Exog only                  & 1   & 168.46$^*$       & 0.919 \\
+Exp 21 & Augment  & Exog + Series              & 5   & 174.09$\pm$0.95  & 0.912 \\
+Exp 22 & Augment  & Exog+Series+Monotone       & 5   & 239.22           & 0.985 \\
+\midrule
+Exp 23 & Curriculum & Exog+Series+Adapt(5q,0.8)& 5   & 177.60           & 0.866 \\
+Exp 24 & Curriculum & Exog+Series+Adapt(3q,1.0)& 5   & 178.03           & 0.874 \\
+Exp 25 & Curriculum & Exog+Series+Adapt(2q,1.2)& 5   & 177.53           & 0.868 \\
+Exp 26 & Curriculum & Curric v1 Stage 1         & 3   & 173.0            & --- \\
+Exp 27 & Curriculum & Curric v1 Stage 2         & 3   & 181.0            & --- \\
+Exp 28 & Curriculum & Curric v1 Stage 3         & 3   & 190.0            & 0.885 \\
+Exp 29 & Curriculum & Curric v2 Stage 1 (Beta)  & 5   & 183.04$\pm$1.9   & 0.947 \\
+Exp 30 & Curriculum & Curric v2 Stage 2 (Adapt) & 5   & \textbf{172.21}$\pm$\textbf{1.5} & 0.907 \\
+Exp 31 & Curriculum & Curric v2 Stage 3 (+Embed)& 5   & 172.75$\pm$1.8   & 0.895 \\
+Exp 32 & Curriculum & Curric v2 Stage 2 + CQR   & 1   & 129.18$^*$       & \textbf{0.960} \\
+\midrule
+Exp 10 & Novel arch & QCBC                      & 5   & 213.22$\pm$2.65  & 0.927 \\
+Exp 11 & Novel arch & TCR                       & 5   & 217.44$\pm$5.42  & 0.923 \\
+Exp 12 & Novel arch & DBE                       & 5   & 212.86$\pm$1.50  & 0.924 \\
+Exp 13 & Novel arch & Non-crossing (cumsum)      & 1   & 217.06$^*$       & 0.922 \\
+\midrule
+Exp 14 & Alt loss   & Smooth Huber pinball       & 1   & 220.34$^*$       & 0.898 \\
+Exp 15 & Alt loss   & Smooth Arctan pinball      & 1   & 249.91$^*$       & 0.916 \\
+Exp 16 & Alt loss   & Hybrid CRPS-Pinball        & 1   & 250.73$^*$       & 0.913 \\
+\bottomrule
+\end{tabular}
+\end{table}

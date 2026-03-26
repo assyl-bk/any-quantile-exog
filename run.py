@@ -67,8 +67,8 @@ def run(cfg_yaml):
     lr_monitor = LearningRateMonitor(logging_interval='step')
     checkpoint_callback = ModelCheckpoint(
         save_top_k=OmegaConf.select(cfg, 'checkpoint.save_top_k', default=2),
-        monitor="epoch",
-        mode="max",
+        monitor=OmegaConf.select(cfg, 'checkpoint.monitor', default='val/crps'),
+        mode=OmegaConf.select(cfg, 'checkpoint.mode', default='min'),
         filename="model-{epoch}"
     )
     
@@ -99,7 +99,28 @@ def run(cfg_yaml):
     ckpt_path = get_checkpoint_path(cfg_updated)
     
     # Train
-    trainer.fit(model, datamodule=dm, ckpt_path=ckpt_path)
+    # ── Checkpoint loading strategy ───────────────────────────────────────────
+    # resume_ckpt: weights-only transfer between stages (strict=False)
+    #              drops/ignores keys that don't match the new class
+    # ckpt_path:   full Lightning resume within same stage (strict=True)
+    resume_ckpt = OmegaConf.select(cfg, 'checkpoint.resume_ckpt', default=None)
+
+    if resume_ckpt is not None:
+        checkpoint = torch.load(resume_ckpt, map_location='cpu', weights_only=False)
+        missing, unexpected = model.load_state_dict(checkpoint['state_dict'], strict=False)
+        print(f"\n\U0001f4e6 Loaded weights (strict=False) from: {resume_ckpt}")
+        if missing:
+            print(f"   Keys initialized fresh      : {missing}")
+        if unexpected:
+            print(f"   Keys ignored (not in model) : {unexpected}")
+        # Reinitialize adaptive bin_probs so it always starts uniform
+        if hasattr(model, '_bin_probs'):
+            n_bins = len(model._bin_probs)
+            model._bin_probs = torch.ones(n_bins, dtype=torch.float32) / n_bins
+            print("   Adaptive bin_probs reinitialized to uniform")
+        trainer.fit(model, datamodule=dm)  # no ckpt_path — weights already loaded
+    else:
+        trainer.fit(model, datamodule=dm, ckpt_path=ckpt_path)
     
     # Test
     test_results = trainer.test(datamodule=dm, ckpt_path=OmegaConf.select(cfg, 'checkpoint.ckpt_path'))

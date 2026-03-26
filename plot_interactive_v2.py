@@ -1,12 +1,3 @@
-"""
-Full Evaluation Script — V2 Sequential Curriculum
-Evaluates on ALL test samples to get proper calibration curves.
-
-Usage:
-    python full_eval_v2.py --model stage2   # Stage 2-v2 (best, default)
-    python full_eval_v2.py --model stage3   # Stage 3-v2
-    python full_eval_v2.py --model both     # Compare both side by side
-"""
 
 import os
 import sys
@@ -20,31 +11,26 @@ from tqdm import tqdm
 import yaml
 import argparse
 
-sys.path.insert(0, str(Path(__file__).parent))
+PROJECT_DIR = Path(r"c:\Users\Pc\OneDrive\Documents\PCD\any-quantile-exog")
+sys.path.insert(0, str(PROJECT_DIR))
+os.chdir(PROJECT_DIR)
 
-from model.models import AnyQuantileForecasterExogSeriesAdaptive
-from utils.model_factory import instantiate   # same pattern as run_stage3_v2.py
+from model.models import AQNBEATSPlusPlus
+from dataset.datasets import EMHIRESUnivariateDataModule
+from utils.model_factory import instantiate   # same pattern as evaluation notebook
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 EVAL_QUANTILES = [0.01, 0.05, 0.10, 0.25, 0.40, 0.50, 0.60, 0.75, 0.90, 0.95, 0.99]
-OUTPUT_DIR     = "results/full_eval_v2"
+OUTPUT_DIR     = str(PROJECT_DIR / "results" / "full_eval_v2")
 
 MODELS = {
     "stage2": {
-        "label":      "V2 Stage 2 — Exog+Adaptive (BEST)",
-        "checkpoint": "lightning_logs/nbeatsaq-v2-stage2-seed0/checkpoints/model-epoch=07.ckpt",
-        "config":     "config/stage2_v2.yaml",
+        "label":      "Stage 2 — Exog+Adaptive (FINAL MODEL)",
+        "checkpoint": str(PROJECT_DIR / "lightning_logs" / "nbeatsaq-stage2-seed0" / "checkpoints" / "model-epoch=4.ckpt"),
+        "config":     str(PROJECT_DIR / "config" / "AQNBEATS++_S2.yaml"),
         "color":      "#2196F3",
         "crps_full":  172.21,
         "cov_full":   0.9070,
-    },
-    "stage3": {
-        "label":      "V2 Stage 3 — Exog+Adaptive+Series",
-        "checkpoint": "lightning_logs/nbeatsaq-v2-stage3-seed0/checkpoints/model-epoch=03.ckpt",
-        "config":     "config/stage3_v2.yaml",
-        "color":      "#FF9800",
-        "crps_full":  172.75,
-        "cov_full":   0.8954,
     },
 }
 
@@ -91,8 +77,20 @@ def load_cfg(config_path: Path) -> OmegaConf:
 
 
 def get_dataloader(cfg):
-    """Use instantiate() — avoids the unexpected keyword argument error."""
-    dm = instantiate(cfg.dataset)
+    """Load dataset directly instead of using instantiate to avoid pydoc lookup issues."""
+    dm = EMHIRESUnivariateDataModule(
+        name               = cfg.dataset.name,
+        train_batch_size   = cfg.dataset.train_batch_size,
+        eval_batch_size    = cfg.dataset.eval_batch_size,
+        num_workers        = cfg.dataset.get("num_workers", 0),
+        persistent_workers = cfg.dataset.get("persistent_workers", False),
+        horizon_length     = cfg.dataset.horizon_length,
+        history_length     = cfg.dataset.history_length,
+        split_boundaries   = cfg.dataset.split_boundaries,
+        fillna             = cfg.dataset.fillna,
+        train_step         = cfg.dataset.train_step,
+        eval_step          = cfg.dataset.eval_step,
+    )
     dm.setup("test")
     print(f"  ✅ Test set: {len(dm.test_dataset):,} samples")
     return dm.test_dataloader()
@@ -118,8 +116,8 @@ def run_full_eval(model_key: str, device: torch.device):
         )
 
     cfg   = load_cfg(cfg_path)
-    model = AnyQuantileForecasterExogSeriesAdaptive.load_from_checkpoint(
-        str(ckpt_path), cfg=cfg, strict=False, map_location=device
+    model = AQNBEATSPlusPlus.load_from_checkpoint(
+        str(ckpt_path), cfg=cfg, strict=False, map_location=device, weights_only=False
     )
     model.eval().to(device)
     print(f"  ✅ Model loaded on {device}")
@@ -375,7 +373,7 @@ def save_text_report(results: dict, save_dir: str):
               "  AQ-ESRNN   CRPS=195.94  N-CRPS=1.72  MAPE=2.32%",
               "=" * 80]
     out = f"{save_dir}/full_eval_report.txt"
-    with open(out, "w") as f:
+    with open(out, "w", encoding='utf-8') as f:
         f.write("\n".join(lines))
     print(f"  ✅ Report saved: {out}")
     print("\n".join(lines))
@@ -385,15 +383,15 @@ def save_text_report(results: dict, save_dir: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["stage2", "stage3", "both"],
-                        default="both", help="Which model(s) to evaluate")
+    parser.add_argument("--model", choices=["stage2"],
+                        default="stage2", help="Model to evaluate (final model)")
     args   = parser.parse_args()
 
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n🖥️  Device: {device}")
 
-    keys = ["stage2", "stage3"] if args.model == "both" else [args.model]
+    keys = ["stage2"]
 
     results = {}
     for key in keys:

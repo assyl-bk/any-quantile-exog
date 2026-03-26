@@ -1,0 +1,41 @@
+\thispagestyle{empty}
+
+\noindent\rule[2pt]{\textwidth}{0.5pt}\\
+{\textbf{Abstract ---}}
+Probabilistic electricity demand forecasting is a critical component of modern
+power system operations, enabling grid operators, energy traders, and capacity
+planners to manage uncertainty arising from renewable integration, weather
+variability, and evolving consumption patterns. This report presents a
+systematic experimental study aimed at enhancing the AQ-NBEATS benchmark
+model for probabilistic short-term electricity demand forecasting on the EMHIRES
+dataset, covering 35 European countries over a 48-hour horizon. Starting from
+the published baseline CRPS of 211.22, we design and evaluate more than twenty
+experiments across four categories: exogenous feature and series-embedding
+augmentation, curriculum quantile training, novel architectural contributions
+(QCBC, TCR, DBE), and post-hoc Conformalized Quantile Regression (CQR).
+Our best multi-seed result combines exogenous weather and calendar features
+with adaptive quantile sampling, achieving a CRPS of 172.21 ,an 18.5\%
+reduction over the published baseline, while CQR post-processing achieves
+a nominal 95.96\% empirical coverage. These results establish new
+state-of-the-art performance on the EMHIRES MHLV benchmark and provide
+actionable guidelines for operational probabilistic load forecasting systems.\\
+{\textbf{Keywords:}} Probabilistic forecasting, AQ-NBEATS, CRPS, EMHIRES,
+conformal prediction, exogenous features, curriculum learning, electricity demand.\\
+\noindent\rule[2pt]{\textwidth}{0.5pt}
+
+\vspace{1.5cm}
+
+\noindent\rule[2pt]{\textwidth}{0.5pt}\\
+{\textbf{R\'esum\'e ---}}
+La pr\'evision probabiliste de la demande d'\'electricit\'e est un composant
+essentiel des op\'erations des syst\`emes \'electriques modernes. Ce rapport
+pr\'esente une \'etude exp\'erimentale syst\'ematique visant \`a am\'eliorer
+le mod\`ele de r\'ef\'erence AQ-NBEATS pour la pr\'evision probabiliste
+de la demande \'electrique \`a court terme sur l'ensemble de donn\'ees EMHIRES,
+couvrant 35 pays europ\'eens sur un horizon de 48 heures. En partant d'un CRPS
+de r\'ef\'erence de 211.22, nous \'evaluons plus de vingt configurations
+et atteignons un CRPS de 172.21, soit une r\'eduction de 18.5\%. La
+calibration post-hoc par CQR atteint une couverture empirique de 95.96\%.\\
+{\textbf{Mots cl\'es:}} Pr\'evision probabiliste, AQ-NBEATS, CRPS, EMHIRES,
+pr\'ediction conforme, variables exog\`enes, apprentissage par curriculum.\\
+\noindent\rule[2pt]{\textwidth}{0.5pt}

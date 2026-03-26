@@ -1,0 +1,156 @@
+\chapter*{Conclusion and Perspectives}
+\addcontentsline{toc}{chapter}{Conclusion and Perspectives}
+\markboth{Conclusion}{Conclusion}
+\label{chap:conclusion}
+
+\section*{Summary of Work}
+
+\noindent
+This report presented a systematic experimental study of AQ-NBEATS
+enhancements for probabilistic short-term electricity demand forecasting
+on the EMHIRES MHLV benchmark, covering 35 European countries over a
+48-hour forecast horizon. Starting from the published baseline CRPS of
+211.22, we designed and evaluated more than twenty configurations across
+four complementary categories: exogenous feature and series-embedding
+augmentation, curriculum quantile training, novel architectural
+contributions, and post-hoc conformal calibration. The following
+conclusions summarise our principal findings.
+
+\vspace{0.5cm}
+
+\noindent
+\textbf{1. Exogenous features are the single largest improvement.}
+Integrating weather (temperature, humidity, pressure, wind speed) and
+calendar features reduces CRPS by approximately 20\%, directly
+confirming the limitation identified in~\cite{smyl2025anyquantile} and
+establishing exogenous integration as the highest-priority enhancement
+for any future work on this benchmark. Importantly, the improvement
+is robust: it persists across all multi-seed exogenous configurations
+evaluated (CRPS range 168--174) and generalises across both Curriculum
+v1 and v2 protocols. This single finding --- that meteorological inputs
+matter more than architectural sophistication --- is the most impactful
+practical contribution of this study.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{2. Curriculum learning achieves the best multi-seed result.}
+The two-stage Curriculum v2 protocol --- beta sampling to establish
+tail calibration, followed by adaptive sampling to sharpen the
+distribution --- achieves CRPS 172.21 ($\pm$1.5) with coverage 0.907.
+This is the best reproducible result in the study and surpasses the
+AQ-ESRNN benchmark (195.94) by approximately 12\%, despite the simpler
+N-BEATS architectural backbone. The curriculum ordering is critical:
+adaptive sampling applied without a calibrated initialisation
+consistently degrades both CRPS and coverage.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{3. CQR reliably corrects miscalibration under distribution shift.}
+Applied post-hoc to a trained quantile model, CQR achieves 96.0\%
+empirical coverage under a challenging winter-to-summer calibration
+split, where the calibration and test distributions differ substantially.
+The marginal CRPS cost (129.49 to 129.18) demonstrates that the
+correction adds only minimal interval width, making CQR an efficient
+and practical post-processing step for any deployed quantile forecaster.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{4. Novel architectural heads establish future baselines.}
+QCBC, TCR, and DBE all perform near the paper baseline (CRPS 212--217)
+without exogenous features. DBE achieves a best-seed CRPS of 210.99,
+marginally below baseline. While none of these contributions achieves
+a clear improvement in isolation, they provide principled frameworks
+and implementations for future research combining novel heads with
+exogenous inputs.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{5. Interaction and ordering effects are critical.}
+The most dramatic negative result in the study --- monotonicity
+constraints on an exogenous model, CRPS = 239.22 --- demonstrates
+that enhancement strategies can have strongly negative interactions
+when combined without curriculum ordering. This finding underscores
+the value of the ablation-driven methodology adopted in this study.
+
+\vspace{0.8cm}
+
+\section*{Future Perspectives}
+
+\noindent
+Several directions emerge naturally from the findings of this work:
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Ensemble of best configurations.}
+Combining Stage 2-v2, the single-seed exogenous model (Exp 20), and a
+series-embedding model via quantile-level median pooling could reduce
+variance and push CRPS below any individual model. The diversity
+of the three configurations (different training strategies, different
+feature sets) suggests low inter-model correlation and thus strong
+ensemble benefits.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Operational weather forecast inputs.}
+The current study uses historical reanalysis data, which is a
+retrospective reconstruction of atmospheric conditions. Operational
+forecasting systems use \emph{weather forecasts}, which carry their
+own uncertainty, particularly at the 24--48 hour lead times relevant
+to day-ahead electricity markets. Replacing reanalysis inputs with
+ensemble weather forecast products (e.g., ECMWF ENS or GFS) would
+more realistically simulate the operational deployment scenario and
+quantify the additional CRPS loss from weather forecast uncertainty.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Online CQR adaptation.}
+The current CQR implementation uses a fixed calibration set and
+therefore cannot adapt to concept drift (e.g., a gradual climate
+shift or a structural change in demand behaviour). A sliding-window
+calibrator that continuously updates the conformity score quantile
+$\Delta$ using the most recent observations would maintain coverage
+guarantees throughout the year without requiring a fixed historical
+calibration period.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Transfer learning and per-country fine-tuning.}
+The global cross-learning strategy trains a single model across all
+35 countries simultaneously. An alternative is to pre-train globally
+(for data efficiency and generalisation) and then fine-tune per country
+on its own recent history. This approach could capture national demand
+idiosyncrasies --- electricity market liberalisation, industrial
+restructuring, residential electrification --- that the global model
+can only partially learn through series embeddings.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Holiday and extreme event modelling.}
+The current system treats public holidays as regular days. Prior work
+has demonstrated that dedicated holiday models or rule-based
+corrections significantly reduce residual error on atypical
+days~\cite{son2022holiday, gunawan2021holiday, arora2018holiday}.
+Integrating these corrections as a modular post-processing step,
+alongside explicit extreme weather event flags (e.g., a temperature
+threshold indicator for heatwave detection), would address the main
+remaining source of tail miscalibration identified in this study.
+
+\vspace{0.3cm}
+
+\noindent
+\textbf{Extension to other energy domains.}
+The any-quantile framework and the curriculum learning methodology
+developed in this study are architecture-agnostic and loss-agnostic.
+Testing their transferability to related probabilistic forecasting
+tasks --- solar photovoltaic generation, wind power output, natural
+gas demand --- would demonstrate the generality of the contributions
+and provide additional benchmarks for the community.

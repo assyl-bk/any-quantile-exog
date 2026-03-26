@@ -12,10 +12,6 @@ Algorithm:
   4. At test time: shift each quantile prediction by its offset
      → guaranteed coverage at each nominal level
 
-Usage:
-    python conformal_v2.py --mode fit  --model stage3   # fit calibrator
-    python conformal_v2.py --mode eval --model stage3   # evaluate
-    python conformal_v2.py --mode both --model stage3   # both (recommended)
 """
 
 import sys
@@ -32,7 +28,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from model.models import AnyQuantileForecasterExogSeriesAdaptive
+from model.models import AQNBEATSPlusPlus
 from utils.model_factory import instantiate
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -40,17 +36,12 @@ EVAL_QUANTILES = [0.01, 0.05, 0.10, 0.25, 0.40, 0.50, 0.60, 0.75, 0.90, 0.95, 0.
 OUTPUT_DIR     = "results/CQR"
 
 MODELS = {
-    "stage2": {
-        "label":      "V2 Stage 2 — Exog+Adaptive",
-        "checkpoint": "lightning_logs/nbeatsaq-v2-stage2-seed0/checkpoints/model-epoch=07.ckpt",
+    
+    "stage2_v2": {
+        "label":      "V2 Stage 2 v2 — Exog+Adaptive",
+        "checkpoint": "lightning_logs/nbeatsaq-stage2-seed0/checkpoints/model-epoch=4.ckpt",
         "config":     "config/stage2_v2.yaml",
-        "color":      "#2196F3",
-    },
-    "stage3": {
-        "label":      "V2 Stage 3 — Exog+Adaptive+Series",
-        "checkpoint": "lightning_logs/nbeatsaq-v2-stage3-seed0/checkpoints/model-epoch=03.ckpt",
-        "config":     "config/stage3_v2.yaml",
-        "color":      "#FF9800",
+        "color":      "#1976D2",
     },
 }
 
@@ -67,7 +58,7 @@ def load_cfg(config_path: Path) -> OmegaConf:
 
 
 def load_model(ckpt_path: Path, cfg: OmegaConf, device: torch.device):
-    model = AnyQuantileForecasterExogSeriesAdaptive.load_from_checkpoint(
+    model = AQNBEATSPlusPlus.load_from_checkpoint(
         str(ckpt_path), cfg=cfg, strict=False, map_location=device
     )
     model.eval().to(device)
@@ -103,7 +94,7 @@ def get_loader(cfg: OmegaConf, stage: str):
     dm.setup(stage="test")
     loader = dm.test_dataloader()
     n = len(dm.test_dataset)
-    print(f"  ✅ {stage} set ({boundaries[2]} → {boundaries[3]}): {n:,} samples")
+    print(f"  ✅ {stage} set ({boundaries[2]} : {n:,} samples")
     return loader
 
 
@@ -207,13 +198,13 @@ class ConformalCalibrator:
     def save(self, path: str):
         with open(path, "wb") as f:
             pickle.dump(self, f)
-        print(f"  ✅ Calibrator saved: {path}")
+        print(f"   Calibrator saved: {path}")
 
     @classmethod
     def load(cls, path: str) -> "ConformalCalibrator":
         with open(path, "rb") as f:
             cal = pickle.load(f)
-        print(f"  ✅ Calibrator loaded: {path}")
+        print(f"   Calibrator loaded: {path}")
         return cal
 
 
@@ -398,7 +389,7 @@ def save_cqr_report(m_raw: dict, m_cqr: dict, calibrator: ConformalCalibrator,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["stage2", "stage3"], default="stage2")
+    parser.add_argument("--model", choices=list(MODELS.keys()), default="stage2")
     parser.add_argument("--mode",  choices=["fit", "eval", "both"],  default="both")
     parser.add_argument("--alpha", type=float, default=0.05,
                         help="Miscoverage level (default 0.05 → 95% coverage)")

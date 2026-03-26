@@ -1,0 +1,486 @@
+\begin{center}
+    \chapter{Methodology of the Study}
+\end{center}
+\label{chap:methodology}
+
+\noindent
+The methodology chapter outlines the step-by-step process used to conduct
+this research. It begins by describing how the data was prepared, including
+dataset organization, missing-value handling, feature scaling, and temporal
+splitting for training, validation, testing, and conformal calibration.
+The chapter then explains the forecasting model architecture, focusing on
+the Any-Quantile AQ-NBEATS backbone and our exogenous adaptive extension.
+The core probabilistic forecasting framework follows the Any-Quantile
+formulation proposed by Smyl et al.~\cite{smyl2025anyquantile}.
+Key aspects such as quantile sampling strategies, stage-wise hyperparameter
+configuration, and evaluation metrics are also presented. Overall, this
+chapter provides a comprehensive understanding of how the study was
+structured and which methodological choices were used to ensure reliable
+and accurate probabilistic electricity demand forecasting.
+
+\section{Methodological Framework}
+\label{sec:method_framework}
+
+Our methodology is organized as a reproducible research pipeline with five
+sequential phases:
+
+\begin{enumerate}
+  \item \textbf{Data preparation}: acquisition, integrity checks,
+        temporal splitting, and feature engineering.
+  \item \textbf{Baseline reproduction}: replication of AQ-NBEATS settings
+        from the reference study~\cite{smyl2025anyquantile}.
+  \item \textbf{Model extension}: integration of exogenous features and
+        quantile-sampling strategies in a staged protocol.
+  \item \textbf{Uncertainty calibration}: conformal post-processing with
+        CQR~\cite{romano2019cqr} to improve interval validity.
+  \item \textbf{Evaluation and ablation}: metric-based comparison under
+        identical data and training conditions.
+\end{enumerate}
+
+This structure ensures that each gain can be attributed to a specific
+methodological change rather than to uncontrolled experimental factors.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{methodology_final_reference_style.png}
+\caption{Global methodology workflow used in this study.}
+\label{fig:method_pipeline_placeholder}
+\end{figure}
+Figure~\ref{fig:method_pipeline_placeholder} presents a compact overview of
+the full methodological pipeline and highlights the transition from
+model-development stages to post-hoc conformal calibration.
+
+
+\section{Data Collection and Understanding}
+\label{sec:data_collection}
+
+\subsection{Dataset Source}
+\label{subsec:dataset_source}
+
+The study uses the EMHIRES electricity demand dataset from the ENTSO-E
+Transparency Platform (35 European countries, hourly granularity,
+2006--2018). The resulting panel exhibits high heterogeneity in demand scale,
+country-specific seasonality, and occasional missing values in late 2018 for
+selected countries.
+
+These properties make the task particularly suitable for quantile forecasting,
+where both central tendency and uncertainty structure must be modeled across
+distinct operating regimes.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{dataset_characteristics_2018.png}
+\caption{Illustrative heterogeneity of EMHIRES demand series across countries.}
+\label{fig:data_heterogeneity_placeholder}
+\end{figure}
+
+Figure~\ref{fig:data_heterogeneity_placeholder} presents a multi-panel visualization highlighting the core challenges addressed by our modeling approach for the 2018 study period:
+
+\subsection{Exogenous and Calendar Features}
+\label{subsec:features}
+
+To improve demand sensitivity to weather and temporal context, we augment the
+target series with:
+
+\begin{itemize}
+  \item \textbf{Continuous meteorological covariates:} temperature,
+        humidity, pressure, and wind speed.
+  \item \textbf{Calendar covariates:} hour-of-day, day-of-week,
+        month-of-year, and weekend indicator.
+\end{itemize}
+
+Calendar variables are deterministically known at forecast time and therefore
+introduce no additional forecast uncertainty. Continuous weather features are
+included to model short-term load sensitivity to atmospheric conditions.
+
+In practice, this feature design allows the model to separate deterministic
+calendar effects (e.g., weekday/weekend rhythm) from uncertain
+weather-driven fluctuations, which is essential for stable probabilistic
+intervals during peak-load and shoulder-load periods.
+
+Formally, for each country-specific timestamp $t$, we define an exogenous
+vector
+\begin{equation}
+\mathbf{e}_t = [\mathrm{temp}_t,\mathrm{hum}_t,\mathrm{press}_t,\mathrm{wind}_t,
+\mathrm{hour}_t,\mathrm{dow}_t,\mathrm{month}_t,\mathrm{weekend}_t],
+\label{eq:exog_vector}
+\end{equation}
+where continuous components are standardized and calendar components are
+mapped to trainable embedding spaces before fusion.
+
+\section{Dataset Organization and Splitting Protocol}
+\label{sec:data_split}
+
+The temporal split follows the reference protocol for fair comparison:
+
+\begin{itemize}
+  \item \textbf{Training:} 2006-01-01 to 2016-12-31.
+  \item \textbf{Validation:} 2017-01-01 to 2017-12-31.
+  \item \textbf{Test:} 2018-01-01 to 2018-12-31.
+\end{itemize}
+
+Each sample uses a lookback window of $W=168$ hours and a forecast horizon of
+$H=48$ hours. Sliding windows are generated with a fixed stride to produce
+supervised tuples of historical demand, historical/future exogenous features,
+country identifier, and future targets.
+
+For each sample index $s$, the supervised training tuple is:
+\begin{equation}
+\mathcal{D}_s=\left(\mathbf{x}_s,\mathbf{E}^{\mathrm{hist}}_s,\mathbf{E}^{\mathrm{fut}}_s,c_s,\mathbf{y}_s\right),
+\label{eq:sample_tuple}
+\end{equation}
+with
+\begin{equation}
+\mathbf{x}_s=[y_{t-W+1},\dots,y_t],\quad
+\mathbf{y}_s=[y_{t+1},\dots,y_{t+H}],
+\label{eq:x_y_windows}
+\end{equation}
+where $c_s$ denotes the country index and $\mathbf{E}^{\mathrm{hist}}_s,
+\mathbf{E}^{\mathrm{fut}}_s$ are the historical and future exogenous matrices.
+
+For conformal calibration, the 2018 period is additionally partitioned into:
+
+\begin{itemize}
+  \item \textbf{Calibration split:} January-June 2018.
+  \item \textbf{Conformal test split:} July-December 2018.
+\end{itemize}
+
+This split enforces strict non-leakage between calibration and final
+interval evaluation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{temporal_splitting_protocol_fixed.png}
+\caption{Chronological split design for training, validation, testing, and CQR calibration.}
+\label{fig:split_protocol_placeholder}
+\end{figure}
+
+Figure~\ref{fig:split_protocol_placeholder} illustrates the strict temporal organization of data used throughout this study. The overall dataset spans 2006-2018 (13 years), and is divided into three non-overlapping periods to ensure an honest forward-in-time evaluation protocol with no leakage from future data:
+
+\begin{itemize}
+  \item \textbf{Training (2006--2016):} An 11-year window used for model fitting and learning of demand patterns, feature relationships, and seasonal dynamics.
+  \item \textbf{Validation (2017):} A 1-year holdout period used for hyperparameter tuning and early stopping to select the best model checkpoint during training.
+  \item \textbf{Test (2018):} A final 1-year holdout reserved for evaluation of forecasting performance on completely unseen data.
+\end{itemize}
+
+Within the test period (2018), an additional split is enforced for conformal calibration:
+
+\begin{itemize}
+  \item \textbf{CQR Calibration (January-June 2018):} Used to compute nonconformity scores and the empirical quantile threshold for interval correction (Eq.~\ref{eq:cqr_score_method}).
+  \item \textbf{CQR Test (July-December 2018):} Held entirely separate and used only for the final evaluation of calibrated prediction intervals.
+\end{itemize}
+
+This chronological design enforces strict temporal consistency, all information used for training,
+
+\section{Preprocessing Pipeline}
+\label{sec:preprocess}
+
+The preprocessing stage is fixed for all compared configurations:
+
+\begin{enumerate}
+  \item \textbf{Missing values:} training NaNs are imputed using weekly
+        lag replacement ($t-168$) to preserve seasonality consistency.
+  \item \textbf{Feature scaling:} continuous exogenous features are
+        standardized with training statistics only.
+  \item \textbf{Categorical encoding:} calendar indices are mapped through
+        learnable embeddings.
+  \item \textbf{Metric filtering:} NaN-marked timestamps in the test period
+        are excluded from metric computation.
+\end{enumerate}
+
+The same preprocessing code path is used across all stages to guarantee
+methodological comparability.
+
+This unified preprocessing policy is critical for fair ablation studies,
+because it ensures that observed gains originate from model or training
+changes rather than from data handling differences.
+
+\section{Modeling Strategy Based on Any-Quantile}
+\label{sec:modeling_strategy}
+
+\subsection{Baseline: AQ-NBEATS Reproduction}
+\label{subsec:baseline_repro_method}
+
+The baseline backbone is NBEATSAQCAT,
+reproduced using the published hyperparameter family~\cite{smyl2025anyquantile}.
+The model learns a direct mapping from context window and quantile level
+$\tau \in (0,1)$ to horizon-wise quantile forecasts.
+
+Let $f_{\theta}$ denote the forecaster. For one sample $s$ and one quantile
+level $\tau$, the horizon output is:
+\begin{equation}
+\hat{\mathbf{q}}_{s,\tau}=f_{\theta}(\mathbf{x}_s,\mathbf{E}^{\mathrm{hist}}_s,
+\mathbf{E}^{\mathrm{fut}}_s,c_s,\tau) \in \mathbb{R}^{H}.
+\label{eq:forecast_mapping}
+\end{equation}
+
+\subsection{Extended Forecaster: Exogenous Adaptive Variant}
+\label{subsec:exog_adaptive_model}
+
+Our main extension uses
+\texttt{AnyQuantileForecasterExogAdaptive}, which integrates:
+
+\begin{itemize}
+  \item historical and future exogenous features,
+  \item calendar embeddings,
+  \item adaptive quantile sampling during fine-tuning.
+\end{itemize}
+
+The objective remains quantile-consistent forecasting, with improved representation of demand drivers and better tail behavior under distributional shifts. Feature fusion can be summarized as:
+\begin{equation}
+\mathbf{z}_s = \phi_x(\mathbf{x}_s)+\phi_h(\mathbf{E}^{\mathrm{hist}}_s)
++\phi_f(\mathbf{E}^{\mathrm{fut}}_s)+\phi_c(c_s),
+\label{eq:feature_fusion}
+\end{equation}
+where $\phi_x,\phi_h,\phi_f,\phi_c$ are learnable projections of demand history, historical exogenous variables, future exogenous variables, and country identity, respectively.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figure_4_4_architecture_en.png}
+\caption{Conceptual architecture of the exogenous adaptive AQ-NBEATS forecaster.}
+\label{fig:model_architecture_placeholder}
+\end{figure}
+
+Figure~\ref{fig:model_architecture_placeholder} illustrates how historical
+load, exogenous variables, and calendar embeddings are fused and processed by
+the AQ-NBEATS backbone to produce multi-quantile forecasts.
+
+\subsection{Quantile Loss Formulation}
+\label{subsec:quantile_loss}
+
+For a target $y$ and predicted quantile $\hat{q}_{\tau}$, the pinball loss is:
+
+\begin{equation}
+\mathcal{L}_{\tau}(y, \hat{q}_{\tau}) =
+(\tau - \mathbb{I}\{y < \hat{q}_{\tau}\})(y - \hat{q}_{\tau}).
+\label{eq:pinball_method}
+\end{equation}
+
+Training minimizes an averaged multi-quantile objective over sampled levels
+$\tau$ and forecast horizons. This is consistent with the Any-Quantile
+paradigm and supports CRPS-oriented improvements.
+
+Given a set of sampled quantiles $\mathcal{T}_s$ for sample $s$, the training
+objective over a mini-batch $\mathcal{B}$ is:
+\begin{equation}
+\mathcal{L}_{\mathrm{MQ}}(\theta)=
+\frac{1}{|\mathcal{B}|}
+\sum_{s\in\mathcal{B}}
+\frac{1}{|\mathcal{T}_s|H}
+\sum_{\tau\in\mathcal{T}_s}\sum_{h=1}^{H}
+\mathcal{L}_{\tau}(y_{s,h},\hat{q}_{s,h,\tau}).
+\label{eq:mq_loss}
+\end{equation}
+
+Operationally, this objective enforces asymmetric penalties for under- and
+over-estimation at each quantile level, enabling the model to learn complete
+predictive distributions rather than only point forecasts.
+
+\section{Stage-wise Training Protocol (Core Contribution)}
+\label{sec:stage_protocol}
+
+The proposed development follows a two-stage training curriculum,
+then a calibration stage:
+
+\subsection{Stage 1: Exogenous Foundation with Beta Sampling}
+\label{subsec:stage1}
+
+Stage 1 establishes a stable exogenous-aware foundation model using
+AQNBEATSPlusPlus with q\_sampling=random\_in\_batch (beta-based random quantile sampling).
+This stage aims to improve global distribution learning and tail exposure
+while preserving optimization stability.
+
+In this phase, quantile levels are sampled from a symmetric beta distribution:
+\begin{equation}
+\tau \sim \mathrm{Beta}(\beta,\beta),
+\label{eq:beta_sampling}
+\end{equation}
+with $\beta<1$ to increase tail-sample frequency and improve lower/upper
+quantile training.
+
+\subsection{Stage 2: Adaptive Quantile Fine-Tuning}
+\label{subsec:stage2}
+
+Stage 2 initializes from Stage 1 weights
+(loaded with \texttt{strict=False}) and switches to adaptive quantile
+sampling. This training phase emphasizes poorly calibrated quantile regions,
+improving sharpness and ranking quality. The best checkpoint is selected by
+validation criterion (best epoch observed at epoch 4 in our final run).
+
+If $g(\tau)$ denotes the current calibration gap estimate for quantile
+$\tau$, adaptive sampling can be expressed as:
+\begin{equation}
+p(\tau)=\frac{\exp\left(\gamma\,|g(\tau)|\right)}
+{\sum_{\tau'\in\mathcal{Q}}\exp\left(\gamma\,|g(\tau')|\right)},
+\label{eq:adaptive_sampling}
+\end{equation}
+where $\gamma$ is a temperature parameter and $\mathcal{Q}$ is the candidate
+quantile set. This mechanism allocates more updates to underperforming
+quantile regions.
+
+
+\subsection{Stage 3: Conformal Calibration (AQ-NBEATS-XA + CQR)}
+\label{subsec:stage3_cqr}
+
+To enforce reliable empirical coverage, we apply CQR on top of the
+Stage-2 predictor. For lower/upper quantile predictions
+$\hat{q}_{\alpha/2}(x_i)$ and $\hat{q}_{1-\alpha/2}(x_i)$, nonconformity scores
+on calibration data are:
+
+\begin{equation}
+s_i = \max\left\{\hat{q}_{\alpha/2}(x_i)-y_i,\; y_i-\hat{q}_{1-\alpha/2}(x_i)\right\}.
+\label{eq:cqr_score_method}
+\end{equation}
+
+Let $\hat{s}_{1-\alpha}$ be the empirical $(1-\alpha)$-quantile of
+$\{s_i\}$. The calibrated interval is:
+
+\begin{equation}
+\left[\hat{q}_{\alpha/2}(x)-\hat{s}_{1-\alpha},\;
+\hat{q}_{1-\alpha/2}(x)+\hat{s}_{1-\alpha}\right].
+\label{eq:cqr_interval_method}
+\end{equation}
+
+This correction is model-agnostic and does not require retraining,
+which makes it practical for deployment.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{cqr_results.png}
+\caption{CQR calibration results showing conformalized quantile intervals with improved coverage guarantees. The visualization demonstrates the effectiveness of post-hoc calibration in achieving nominal coverage levels across different quantile ranges.}
+\label{fig:cqr_results}
+\end{figure}
+
+\section{Evaluation Protocol and Metrics}
+\label{sec:eval_protocol}
+
+All configurations are evaluated under identical splits and preprocessing.
+Let $N$ denote the number of evaluated observations and $\mathcal{T}$ the
+set of quantile levels used for scoring.
+
+\subsection{CRPS and Quantile Approximation}
+\label{subsec:crps_formal}
+
+CRPS is the primary ranking metric for probabilistic forecasts~\cite{gneiting2007strictly}.
+Using quantile forecasts, it is approximated by:
+\begin{equation}
+\mathrm{CRPS} \approx \frac{2}{|\mathcal{T}|N}
+\sum_{i=1}^{N}\sum_{\tau\in\mathcal{T}}
+\mathcal{L}_{\tau}(y_i,\hat{q}_{i,\tau}).
+\label{eq:crps_quantile}
+\end{equation}
+
+\subsection{Normalized CRPS}
+\label{subsec:ncrps_formal}
+
+To compare across countries with very different demand scales, we use:
+\begin{equation}
+\mathrm{N\text{-}CRPS}=\frac{\mathrm{CRPS}}{\bar{y}},
+\label{eq:ncrps_formal}
+\end{equation}
+where $\bar{y}$ is the mean load over the corresponding evaluation segment.
+
+\subsection{Coverage of Prediction Intervals}
+\label{subsec:coverage_formal}
+
+For a target miscoverage level $\alpha$ (e.g., $\alpha=0.05$ for 95\% PI),
+empirical coverage is computed as:
+\begin{equation}
+\mathrm{Coverage}_{1-\alpha}=\frac{1}{N}\sum_{i=1}^{N}
+\mathbb{I}\left\{\hat{q}_{i,\alpha/2}\le y_i\le \hat{q}_{i,1-\alpha/2}\right\}.
+\label{eq:coverage_formal}
+\end{equation}
+
+\subsection{Point Forecast Metrics}
+\label{subsec:point_metrics_formal}
+
+Point metrics are computed from the median forecast
+$\hat{y}_i=\hat{q}_{i,0.5}$:
+\begin{align}
+\mathrm{MAE} &= \frac{1}{N}\sum_{i=1}^{N}|y_i-\hat{y}_i|, \label{eq:mae_formal} \\
+\mathrm{MAPE} &= \frac{100}{N}\sum_{i=1}^{N}\left|\frac{y_i-\hat{y}_i}{y_i}\right|, \label{eq:mape_formal} \\
+\mathrm{SMAPE} &= \frac{100}{N}\sum_{i=1}^{N}
+\frac{2|y_i-\hat{y}_i|}{|y_i|+|\hat{y}_i|}. \label{eq:smape_formal}
+\end{align}
+
+For robustness, MAPE is computed on non-zero targets only.
+
+\subsection{Reporting Protocol}
+\label{subsec:reporting_protocol}
+
+For each configuration, we report the primary CRPS ranking value and
+complementary calibration and point metrics under the same filtered test set
+(NaN timestamps excluded).
+
+To reduce randomness bias, we track checkpointed validation performance and
+report final values on the untouched test period. Calibration and test sets
+are strictly separated for CQR.
+
+For publication reporting, each metric should be accompanied by the exact
+evaluation split definition and, whenever available, variability indicators
+(standard deviation or confidence intervals) to support robust interpretation.
+
+\section{Methodological Traceability and Reproducibility}
+\label{sec:reproducibility}
+
+Reproducibility is ensured through:
+
+\begin{itemize}
+  \item fixed data split definitions,
+  \item version-controlled configuration files and code,
+  \item deterministic preprocessing and feature pipelines,
+  \item explicit stage-to-stage checkpoint transfer,
+  \item standardized metric scripts shared across experiments.
+\end{itemize}
+
+The methodology is therefore auditable from raw data ingestion to final
+probabilistic outputs.
+
+\section{Methodology Outcome Summary}
+\label{sec:method_outcomes}
+
+This section provides a concise summary of the developed methodological
+pipeline and the corresponding performance outcomes, with a specific focus
+on the Continuous Ranked Probability Score (CRPS) achieved at each major
+stage. The sequential application of our main contributions---exogenous
+feature integration with beta sampling, adaptive quantile fine-tuning, and
+post-hoc Conformal Quantile Regression (CQR)---defines a structured pathway
+for improving probabilistic forecasting accuracy.
+
+Table~\ref{tab:method_stage_summary} (Table~4.1) summarizes the final
+methodological stages and their respective CRPS values, highlighting the
+incremental gains achieved throughout the project.
+
+\begin{table}[H]
+\centering
+\caption{Stage-wise methodology and obtained CRPS values.}
+\label{tab:method_stage_summary}
+\begin{tabular}{llc}
+\toprule
+\textbf{Stage} & \textbf{Configuration} & \textbf{CRPS} \\
+\midrule
+Stage 1 (Final) & Exog + Beta sampling foundation & 178.16 \\
+Stage 2 (Final) & Exog + Adaptive sampling fine-tuning & 169.39 \\
+AQNBEATS++ + CQR & Conformalized calibrated version & \textbf{126.66} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results presented in Table~\ref{tab:method_stage_summary} demonstrate a
+consistent and substantial improvement over baseline behavior. Stage~1,
+which establishes an exogenous-aware foundation model using beta sampling,
+reduces CRPS to 178.16~MW. This gain confirms the value of stronger global
+distribution learning and improved tail exposure. Stage~2 further refines
+the model through adaptive quantile sampling and reaches 169.39~MW,
+indicating improved sharpness and better correction of poorly calibrated
+quantile regions.
+
+The final AQNBEATS++ + CQR stage delivers the largest performance jump,
+achieving a CRPS of 126.66~MW. This result confirms the effectiveness of
+post-hoc conformal calibration for enforcing reliable empirical coverage
+while further improving forecast interval quality. Overall, the full
+methodological sequence---robust exogenous modeling, adaptive quantile
+refinement, and conformal calibration---proves highly effective for
+probabilistic short-term load forecasting and establishes state-of-the-art
+performance in this study setting.
+

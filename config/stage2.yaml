@@ -92,7 +92,7 @@ checkpoint:
   mode: min
   ckpt_path: null
   # CRITICAL: Resume from Stage 1
-  resume_ckpt: lightning_logs/nbeatsaq-sequential-stage1-seed0/checkpoints/model-epoch=7.ckpt
+  resume_ckpt: lightning_logs/nbeatsaq-sequential-stage1-seed0/checkpoints/model-epoch=7-v3.ckpt
 
 random:
   seed: 0

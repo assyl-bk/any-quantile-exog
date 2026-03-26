@@ -1,0 +1,59 @@
+\chapter*{Introduction}
+\addcontentsline{toc}{chapter}{Introduction}
+\markboth{Introduction}{Introduction}
+\label{chap:introduction}
+
+\noindent
+Modern power grids are evolving faster than at any point in their history.
+The integration of variable renewable energy sources such as wind, solar
+photovoltaic, and run-of-river hydro has replaced the predictable output
+of conventional thermal plants with generation profiles that fluctuate on
+timescales of minutes to hours. At the same time, demand-side dynamics are
+growing in complexity: electric vehicle charging, smart building management
+systems, and responsive industrial loads all introduce new patterns of
+uncertainty that deterministic point forecasts cannot adequately characterize.
+In this environment, \emph{probabilistic forecasting}, which provides a
+full predictive distribution of future electricity demand rather than a single
+value, has transitioned from an academic research topic to an operational
+necessity for grid operators, energy traders, and capacity planners alike.
+
+\vspace{0.5cm}
+
+\noindent
+This project addresses the challenge of short-term probabilistic electricity
+demand forecasting from a practical research perspective. Its starting point
+is the recently published \emph{any-quantile} (AQ) framework of Smyl et
+al.~\cite{smyl2025anyquantile}, which enables a single trained neural network
+to generate forecasts at any arbitrary quantile level at inference time.
+Applied to the N-BEATS architecture, this framework achieved a Continuous
+Ranked Probability Score (CRPS) of 211.22 on the EMHIRES benchmark, 35
+European countries, 48-hour horizon, 2018 test year, establishing a
+compelling reference performance. The benchmark paper explicitly
+identified exogenous meteorological features and more sophisticated
+quantile-sampling strategies as promising directions for improvement.
+
+\vspace{0.5cm}
+
+\noindent
+The present report documents our systematic investigation of these and
+other enhancement strategies. Through a carefully controlled ablation study
+spanning more than twenty configurations, we demonstrate that integrating
+weather and calendar exogenous features into AQ-NBEATS reduces CRPS by
+approximately 20\%, surpassing even the stronger AQ-ESRNN variant from
+the same paper. A curriculum learning approach combining beta-distributed
+tail sampling with adaptive quantile scheduling achieves our best
+multi-seed result of CRPS = 171.3. Finally, post-hoc Conformalized
+Quantile Regression (CQR) corrects residual calibration gaps, achieving
+nominal 95\% empirical coverage even under seasonal distribution shift.
+
+\vspace{0.5cm}
+
+\noindent
+\textbf{Structure of the report.}
+Chapter~1 reviews the technical background and related literature.
+Chapter~2 analyses and specifies the system requirements.
+Chapter~3 presents the software and architectural design.
+Chapter~4 details the experimental methodology.
+Chapter~5 presents implementation details and empirical results with
+comprehensive analysis. A final chapter concludes and outlines future
+research perspectives.

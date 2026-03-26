@@ -13,11 +13,12 @@ from .models import (
     AnyQuantileForecasterWithTCR,  # TCR contribution
     AnyQuantileForecasterWithDBE,  # DBE contribution
     AnyQuantileForecasterQCNBEATS,  # QC-NBEATS: Combined QCBC+TCR+DBE
-    AnyQuantileForecasterExog,  # Exogenous features support
+    AnyQuantileForecasterExog,
+    AQNBEATSPlusPlus,  # Exogenous features support
     AnyQuantileWithSeriesEmbedding,
     AnyQuantileForecasterCombined,    
     AnyQuantileForecasterExogWithSeries,
-    AnyQuantileForecasterExogSeriesAdaptive
+    AnyQuantileForecasterExogSeriesAdaptive,
     )
 
 __all__ = [
@@ -35,8 +36,10 @@ __all__ = [
     'AnyQuantileForecasterWithHierarchicalMonotonicity',
     'AnyQuantileForecasterQCNBEATS',
     'AnyQuantileForecasterExog',
+    'AQNBEATSPlusPlus',
     'AnyQuantileWithSeriesEmbedding',
     'AnyQuantileForecasterExogWithSeries',
     'AnyQuantileForecasterExogSeriesAdaptive',
-    'AnyQuantileForecasterCombined'
+    'AnyQuantileForecasterCombined',
+
 ]
