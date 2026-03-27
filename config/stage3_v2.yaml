@@ -1,0 +1,121 @@
+# ============================================================
+# STAGE 3 v2: Exog + Adaptive + Series Embeddings  (Epochs 19–25)
+# ============================================================
+# Goal: Final fine-tuning — unlock series embeddings to add
+# country-specific residual corrections on top of the already
+# well-calibrated Exog+Adaptive model.
+#
+# Series embeddings are the smallest, most surgical addition.
+# Very low LR ensures we don't disturb the adaptive calibration.
+# ============================================================
+
+model:
+  _target_: model.AnyQuantileForecasterExogSeriesAdaptive
+
+  nn:
+    backbone:
+      _target_: modules.NBEATSAQCAT
+      num_blocks: 30
+      num_layers: 3
+      layer_width: 1024
+      share: false
+      size_in: 168
+      size_out: 24
+      dropout: 0.05
+      quantile_embed_dim: 64
+      quantile_embed_num: 100
+      num_continuous: 4
+      num_calendar: 4
+
+  input_horizon_len: 168
+  loss:
+    _target_: losses.MQNLoss
+
+  # Keep identical adaptive settings from Stage 2
+  q_sampling: adaptive
+  q_distribution: beta
+  q_parameter: 0.3
+  max_norm: true
+
+  # NOW enable series embeddings
+  num_series: 35
+  series_embed_dim: 32
+  series_embed_scale: 0.08 # UNLOCKED — was 0.0 in Stage 2
+
+  # Same adaptive settings as Stage 2 — don't change mid-curriculum
+  adaptive_sampling:
+    num_adaptive_quantiles: 4
+    num_bins: 30
+    momentum: 0.99
+    temperature: 1.2
+    min_prob: 0.002
+
+  # Very low LR — light polish only
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0001 # VERY SLOW — preserve adaptive calibration
+    weight_decay: 0.00001
+    betas: [0.9, 0.999]
+
+  scheduler:
+    _target_: schedulers.InverseSquareRoot
+    warmup_updates: 100
+    warmup_end_lr: 0.0001
+
+dataset:
+  _target_: dataset.EMHIRESUnivariateDataModule
+  name: MHLV
+  train_batch_size: 512
+  eval_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  split_boundaries:
+    - "2006-01-01"
+    - "2017-12-30"
+    - "2018-01-01"
+    - "2019-01-01"
+  history_length: 168
+  horizon_length: 24
+  fillna: ffill
+  train_step: 1
+  eval_step: 24
+  exog_features:
+    - temperature
+    - humidity
+    - pressure
+    - wind_speed
+  calendar_features: true
+
+trainer:
+  max_epochs: 25 # 7 more epochs on top of Stage 2's 18
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 100
+  devices: 1
+  accelerator: gpu
+  precision: 16
+  gradient_clip_val: 0.3 # very tight — minimal weight updates
+
+logging:
+  path: lightning_logs
+  name: nbeatsaq-v2-stage3
+
+checkpoint:
+  save_top_k: 1
+  monitor: val/crps
+  mode: min
+  ckpt_path: null
+  # CRITICAL: load Stage 2 v2 weights
+  resume_ckpt: lightning_logs/nbeatsaq-v2-stage2-seed0/checkpoints/model-epoch=07.ckpt
+
+random:
+  seed: 0
+
+# ============================================================
+# HOW TO RUN:
+#   python run-stage3.py --config config/stage3-v2.yaml
+#
+# Expected CRPS: ~170-173 with improved coverage-0.95
+# Output checkpoint:
+#   lightning_logs/nbeatsaq-v2-stage3-seed0/checkpoints/
+#
+# ============================================================
